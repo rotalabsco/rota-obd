@@ -11,6 +11,16 @@ entra como um **perfil** descoberto pela comunidade.
 > Estado: **versão 0.1, fase de descoberta.** Lê tudo o que o carro expõe e grava em arquivo para
 > montarmos os perfis. Consumo real e painel flutuante vêm nas próximas etapas.
 
+## Telas
+
+| Ao vivo | Falhas |
+|---|---|
+| ![Ao vivo](docs/prints/ao-vivo.png) | ![Falhas](docs/prints/falhas.png) |
+| **Garagem** | **Conexão e modo de espera** |
+| ![Garagem](docs/prints/garagem.png) | ![Conexão](docs/prints/conexao.png) |
+
+Capturas do emulador em 1280×720 com o modo demonstração. Valores simulados.
+
 ## O que já faz
 
 - Conecta por **BLE** (Vgate iCar Pro, clones FFF0/FFE0, Microchip) ou **Bluetooth clássico** (SPP)
@@ -81,6 +91,9 @@ formato dos dados, a ficha da Pajero 4M41, as decisões de projeto e como compil
 
 ## Créditos
 
+- Visual: [RotaLabs DS](docs/visual.md). Fontes Bricolage Grotesque, Geist e Geist Mono (SIL Open Font
+  License, textos em `app/src/main/assets/licencas/`). Ícones no estilo [Lucide](https://lucide.dev) (ISC),
+  redesenhados como caminhos vetoriais.
 - [OBDLogger (NaleenB/obd-profile-logger)](https://github.com/NaleenB/obd-profile-logger), MIT: as notas de
   protocolo sobre ELM327 BLE e o serviço 21 da Mitsubishi guiaram o desenho deste projeto. Nenhum código copiado.
 - [kotlin-obd-api](https://github.com/eltonvs/kotlin-obd-api) e [AndrOBD](https://github.com/fr3ts0n/AndrOBD)

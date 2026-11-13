@@ -19,6 +19,9 @@ Registro curto das escolhas feitas e do motivo, para quem continuar o projeto.
 | 13 | Música pelo sistema de mídia do Android (MediaSession) | Controla YouTube Music ou Spotify sem abrir o app deles |
 | 14 | Exportação: resumo para o Home Assistant por MQTT; arquivos brutos por pasta sincronizada (Syncthing) | O HA cria sensores sozinho; Syncthing não exige nuvem nem login dentro do app |
 | 15 | APK gerado pelo GitHub Actions e publicado em Releases | Quem testa não precisa de Android Studio; erros de build viram issue automaticamente |
+| 16 | Nome Rota.OBD, pacote `co.rotalabs.obd`, parte da RotaLabs (Labs) | Projeto aberto da RotaLabs, para uso próprio e da comunidade |
+| 17 | Visual pelo RotaLabs DS (escuro), com tokens em `ui/theme` e sem biblioteca de ícones | Mesma marca dos outros projetos; ícones Lucide redesenhados como caminhos para não adicionar dependência |
+| 18 | Telas com pesos e grades adaptáveis, sem tamanho fixo de 1280×720 | A densidade da central é desconhecida: em 240 dpi, 1280×720 px viram 853×480 dp |
 
 ## Próximos passos combinados
 
@@ -26,5 +29,5 @@ Registro curto das escolhas feitas e do motivo, para quem continuar o projeto.
 2. Temperatura do câmbio e do motor com alerta, e viagens automáticas com consumo real.
 3. Painel flutuante com controle de música.
 4. Sincronização com o Home Assistant.
-5. Rodada de visual: ícones, hierarquia no Ao vivo, números no formato brasileiro, cores de alerta.
+5. Rodada de visual: feita (RotaLabs DS, ícones, hierarquia no Ao vivo, números no formato brasileiro, alertas). Falta medir a densidade real da central.
 6. Importar o histórico do Carango, se ele exportar arquivo.
