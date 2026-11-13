@@ -1,6 +1,11 @@
 package io.github.obdlivre.ui
 
+import android.Manifest
 import android.app.Application
+import android.content.Context
+import android.content.pm.PackageManager
+import android.os.Build
+import androidx.core.content.ContextCompat
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import io.github.obdlivre.android.BleLink
@@ -9,6 +14,9 @@ import io.github.obdlivre.android.DeviceScanner
 import io.github.obdlivre.android.FoundDevice
 import io.github.obdlivre.core.AdapterInfo
 import io.github.obdlivre.core.ByteLink
+import io.github.obdlivre.core.Deadline
+import io.github.obdlivre.core.DeadlineStore
+import io.github.obdlivre.core.Deadlines
 import io.github.obdlivre.core.Discovery
 import io.github.obdlivre.core.Elm327
 import io.github.obdlivre.core.ElmExchanger
@@ -24,9 +32,10 @@ import io.github.obdlivre.core.NdjsonRecorder
 import io.github.obdlivre.core.ObdPids
 import io.github.obdlivre.core.ObdResult
 import io.github.obdlivre.core.SimulatedLink
+import io.github.obdlivre.core.SleepPolicy
 import io.github.obdlivre.core.Vehicle
-import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -91,72 +100,213 @@ class ObdViewModel(app: Application) : AndroidViewModel(app) {
     private var adapterInfo: AdapterInfo? = null
     private var engineSupported: List<Int>? = null
     private var job: Job? = null
+    private var jobLabel: String? = null
+
+    // Modo de espera do adaptador
+    private var sleepPolicy: SleepPolicy? = null
+    private var watchdog: Job? = null
+    private var reconnectJob: Job? = null
+    private var quiet = false
+    private var resumeLive = false
+    private var currentDevice: FoundDevice? = null
+    private var currentName = ""
+    private var currentDetail = ""
+    private val prefs = app.getSharedPreferences("obd-livre", Context.MODE_PRIVATE)
 
     val sessionsDir: File = File(app.getExternalFilesDir(null) ?: app.filesDir, "sessoes").apply { mkdirs() }
-    private val garageFile = File(app.getExternalFilesDir(null) ?: app.filesDir, "garagem.json")
+    private val dataDir: File = app.getExternalFilesDir(null) ?: app.filesDir
+    private val garageFile = File(dataDir, "garagem.json")
     private val garageStore = GarageStore(garageFile)
     private val _garage = MutableStateFlow(garageStore.load())
     val garage: StateFlow<GarageData> = _garage
     private val _refuel = MutableStateFlow<RefuelPrompt?>(null)
     val refuel: StateFlow<RefuelPrompt?> = _refuel
+    private val deadlinesFile = File(dataDir, "vencimentos.json")
+    private val deadlineStore = DeadlineStore(deadlinesFile)
+    private val _deadlines = MutableStateFlow(deadlineStore.load())
+    val deadlines: StateFlow<List<Deadline>> = _deadlines
+
+    init {
+        autoConnectOnStart()
+    }
 
     private fun log(line: String) {
         val time = SimpleDateFormat("HH:mm:ss.SSS", Locale.ROOT).format(Date())
         _log.value = (_log.value + "$time $line").takeLast(400)
     }
 
+    // ---------- Conexão ----------
+
+    /** Conexão pedida pelo usuário (ou modo demonstração, com [found] nulo). */
     fun connect(found: FoundDevice?) {
         scanner.stop()
+        stopReconnect()
         job?.cancel()
-        viewModelScope.launch {
-            disconnectInternal()
-            val name = found?.name ?: "Simulador"
-            _conn.value = ConnState.Connecting(name)
-            try {
-                val (l, detail) = when {
-                    found == null -> SimulatedLink() to "modo demonstração"
-                    found.ble -> BleLink(getApplication(), found.device).also {
-                        it.onDisconnected = { onLinkLost() }
-                        it.connect()
-                    }.let { it to it.describe }
-                    else -> ClassicLink(scanner.adapter, found.device).also {
-                        it.onDisconnected = { onLinkLost() }
-                        it.connect()
-                    } to "Bluetooth clássico (SPP)"
+        if (found != null) {
+            prefs.edit().putString(KEY_ADDRESS, found.address).putBoolean(KEY_BLE, found.ble)
+                .putString(KEY_NAME, found.name).apply()
+        }
+        viewModelScope.launch { openConnection(found, silent = false) }
+    }
+
+    /** Abre a conexão e prepara o adaptador. Devolve true se ficou conectado. */
+    private suspend fun openConnection(found: FoundDevice?, silent: Boolean): Boolean {
+        disconnectInternal()
+        val name = found?.name ?: "Simulador"
+        if (!silent) _conn.value = ConnState.Connecting(name)
+        return try {
+            val (l, detail) = when {
+                found == null -> SimulatedLink() to "modo demonstração"
+                found.ble -> BleLink(getApplication(), found.device).also {
+                    it.onDisconnected = { onLinkLost() }
+                    it.connect()
+                }.let { it to it.describe }
+                else -> ClassicLink(scanner.adapter, found.device).also {
+                    it.onDisconnected = { onLinkLost() }
+                    it.connect()
+                } to "Bluetooth clássico (SPP)"
+            }
+            link = l
+            currentDevice = found
+            val stamp = SimpleDateFormat("yyyy-MM-dd_HH-mm-ss", Locale.ROOT).format(Date())
+            val rec = NdjsonRecorder(File(sessionsDir, "sessao_$stamp.ndjson"))
+            recorder = rec
+            rec.record("session", mapOf("device" to name, "link" to detail, "app" to "obd-livre"))
+            val e = Elm327(ElmExchanger(l), rec, ::log)
+            elm = e
+            val info = e.initialize()
+            adapterInfo = info
+            log("Adaptador: ${info.version} | ${info.voltage} | protocolo ${info.protocol}")
+            currentName = name
+            currentDetail = "$detail · ${info.version} · protocolo ${info.protocol}"
+            _conn.value = ConnState.Connected(name, currentDetail)
+            if (found != null) startWatchdog(e)
+            // Roda como operação exclusiva para não disputar o adaptador com a próxima ação do usuário.
+            // Se a leitura ao vivo foi pausada pelo modo de espera, retoma depois da identificação.
+            exclusive("Identificação do carro", userAction = false) {
+                identifyAndCheckFuel(it)
+                if (resumeLive) {
+                    resumeLive = false
+                    viewModelScope.launch { startLive() }
                 }
-                link = l
-                val stamp = SimpleDateFormat("yyyy-MM-dd_HH-mm-ss", Locale.ROOT).format(Date())
-                val rec = NdjsonRecorder(File(sessionsDir, "sessao_$stamp.ndjson"))
-                recorder = rec
-                rec.record("session", mapOf("device" to name, "link" to detail, "app" to "obd-livre"))
-                val e = Elm327(ElmExchanger(l), rec, ::log)
-                elm = e
-                val info = e.initialize()
-                adapterInfo = info
-                log("Adaptador: ${info.version} | ${info.voltage} | protocolo ${info.protocol}")
-                _conn.value = ConnState.Connected(name, "$detail · ${info.version} · protocolo ${info.protocol}")
-                // Roda como operação exclusiva para não disputar o adaptador com a próxima ação do usuário.
-                exclusive("Identificação do carro") { identifyAndCheckFuel(it) }
-            } catch (ex: CancellationException) {
-                throw ex
-            } catch (ex: Exception) {
+            }
+            true
+        } catch (ex: CancellationException) {
+            throw ex
+        } catch (ex: Exception) {
+            if (!silent) {
                 log("Erro: ${ex.message}")
                 _conn.value = ConnState.Failed(ex.message ?: ex.toString())
-                disconnectInternal()
             }
+            disconnectInternal()
+            false
         }
     }
 
     private fun onLinkLost() {
         if (_conn.value is ConnState.Connected) {
-            log("Conexão com o adaptador perdida")
-            _conn.value = ConnState.Failed("Conexão perdida")
+            log("Conexão com o adaptador perdida (carro desligado ou adaptador em espera)")
             job?.cancel()
+            waitForCar()
+        }
+    }
+
+    /** Solta o adaptador e tenta reconectar de tempos em tempos, até o carro ligar de novo. */
+    private fun waitForCar() {
+        val device = currentDevice ?: return
+        viewModelScope.launch {
+            disconnectInternal()
+            _conn.value = ConnState.Connecting("${device.name} · aguardando o carro ligar")
+            startReconnect(device)
+        }
+    }
+
+    private fun startReconnect(device: FoundDevice) {
+        if (reconnectJob?.isActive == true) return
+        reconnectJob = viewModelScope.launch {
+            var wait = 20_000L
+            while (isActive) {
+                delay(wait)
+                if (openConnection(device, silent = true)) {
+                    log("Reconectado a ${device.name}")
+                    return@launch
+                }
+                wait = minOf(wait + 10_000L, 60_000L)
+            }
+        }
+    }
+
+    private fun stopReconnect() {
+        reconnectJob?.cancel()
+        reconnectJob = null
+    }
+
+    /** Ao abrir o app, conecta sozinho ao último adaptador usado (se a permissão já foi dada). */
+    private fun autoConnectOnStart() {
+        val address = prefs.getString(KEY_ADDRESS, null) ?: return
+        val adapter = scanner.adapter ?: return
+        val permission = if (Build.VERSION.SDK_INT >= 31) Manifest.permission.BLUETOOTH_CONNECT else Manifest.permission.BLUETOOTH
+        if (ContextCompat.checkSelfPermission(getApplication(), permission) != PackageManager.PERMISSION_GRANTED) return
+        val device = runCatching { adapter.getRemoteDevice(address) }.getOrNull() ?: return
+        val found = FoundDevice(
+            device, prefs.getString(KEY_NAME, null) ?: address, address,
+            ble = prefs.getBoolean(KEY_BLE, true), rssi = null,
+        )
+        currentDevice = found
+        viewModelScope.launch {
+            _conn.value = ConnState.Connecting("${found.name} · aguardando o carro ligar")
+            if (!openConnection(found, silent = true)) startReconnect(found)
+        }
+    }
+
+    /**
+     * Vigia o motor pela tensão lida no próprio adaptador (ATRV, sem tráfego no carro).
+     * Motor desligado: pausa leituras contínuas e, depois, solta o adaptador para ele dormir.
+     */
+    private fun startWatchdog(e: Elm327) {
+        watchdog?.cancel()
+        quiet = false
+        val policy = SleepPolicy(System.currentTimeMillis())
+        sleepPolicy = policy
+        watchdog = viewModelScope.launch {
+            while (isActive) {
+                delay(if (quiet) 60_000L else 30_000L)
+                val volts = SleepPolicy.parseVoltage(e.raw("ATRV", 1500))
+                when (policy.observe(System.currentTimeMillis(), volts)) {
+                    SleepPolicy.Mode.ACTIVE -> if (quiet) {
+                        quiet = false
+                        log("Motor ligado (%.1f V): leituras retomadas".format(Locale.ROOT, volts ?: 0.0))
+                        _conn.value = ConnState.Connected(currentName, currentDetail)
+                        if (resumeLive) {
+                            resumeLive = false
+                            startLive()
+                        }
+                    }
+                    SleepPolicy.Mode.QUIET -> if (!quiet) {
+                        quiet = true
+                        log("Motor desligado (%.1f V): leituras pausadas para não manter o carro acordado".format(Locale.ROOT, volts ?: 0.0))
+                        _conn.value = ConnState.Connected(currentName, "$currentDetail · motor desligado, leituras pausadas")
+                        if (jobLabel == LABEL_LIVE || jobLabel?.startsWith(LABEL_LID) == true) {
+                            resumeLive = jobLabel == LABEL_LIVE
+                            job?.cancel()
+                        }
+                    }
+                    SleepPolicy.Mode.RELEASE -> {
+                        log("Liberando o adaptador para entrar em espera")
+                        job?.cancel()
+                        waitForCar()
+                        return@launch
+                    }
+                }
+            }
         }
     }
 
     fun disconnect() {
+        stopReconnect()
         job?.cancel()
+        prefs.edit().remove(KEY_ADDRESS).apply()
+        resumeLive = false
         viewModelScope.launch {
             disconnectInternal()
             _conn.value = ConnState.Idle
@@ -164,6 +314,8 @@ class ObdViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     private suspend fun disconnectInternal() {
+        watchdog?.cancel()
+        watchdog = null
         runCatching { link?.close() }
         runCatching { recorder?.close() }
         link = null
@@ -173,13 +325,15 @@ class ObdViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     /** Roda uma operação por vez; a nova cancela a anterior. */
-    private fun exclusive(label: String, block: suspend (Elm327) -> Unit) {
+    private fun exclusive(label: String, userAction: Boolean = true, block: suspend (Elm327) -> Unit) {
         val e = elm ?: run { log("Conecte ao adaptador primeiro"); return }
+        if (userAction) sleepPolicy?.touch(System.currentTimeMillis())
         val previous = job
         job = viewModelScope.launch {
             previous?.cancel()
             previous?.join()
             _busy.value = label
+            jobLabel = label
             try {
                 block(e)
             } catch (ex: CancellationException) {
@@ -188,13 +342,17 @@ class ObdViewModel(app: Application) : AndroidViewModel(app) {
                 log("$label falhou: ${ex.message}")
             } finally {
                 if (_busy.value == label) _busy.value = null
+                if (jobLabel == label) jobLabel = null
             }
         }
     }
 
     fun stop() {
+        resumeLive = false
         job?.cancel()
     }
+
+    // ---------- Leituras ----------
 
     fun runDiscovery(sweep21: Boolean) = exclusive("Descoberta") { e ->
         _report.value = null
@@ -211,7 +369,7 @@ class ObdViewModel(app: Application) : AndroidViewModel(app) {
         _report.value = text
     }
 
-    fun startLive() = exclusive("Ao vivo") { e ->
+    fun startLive() = exclusive(LABEL_LIVE) { e ->
         val supported = engineSupported ?: e.supportedPids(Modules.ENGINE).also { engineSupported = it }
         val pids = supported.filter { it in ObdPids.defs }
         if (pids.isEmpty()) {
@@ -251,7 +409,7 @@ class ObdViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     /** Lê um identificador do serviço 21 repetidamente e marca quais bytes mudam. */
-    fun watchLid(module: Module, lid: Int) = exclusive("Explorar 21%02X".format(lid)) { e ->
+    fun watchLid(module: Module, lid: Int) = exclusive(LABEL_LID + "%02X".format(lid)) { e ->
         var w = LidWatch(module, lid)
         _watch.value = w
         while (kotlin.coroutines.coroutineContext.isActive) {
@@ -302,6 +460,21 @@ class ObdViewModel(app: Application) : AndroidViewModel(app) {
         _refuel.value = null
     }
 
+    // ---------- Vencimentos ----------
+
+    private fun updateDeadlines(change: (List<Deadline>) -> List<Deadline>) {
+        val next = change(_deadlines.value)
+        _deadlines.value = next
+        viewModelScope.launch(Dispatchers.IO) { deadlineStore.save(next) }
+    }
+
+    fun saveDeadline(d: Deadline) = updateDeadlines { list ->
+        val idx = list.indexOfFirst { it.id == d.id }
+        if (idx < 0) list + d else list.toMutableList().also { it[idx] = d }
+    }
+    fun deleteDeadline(id: String) = updateDeadlines { list -> list.filterNot { it.id == id } }
+    fun renewDeadline(id: String) = updateDeadlines { list -> list.map { if (it.id == id) Deadlines.renew(it) else it } }
+
     /** Ao conectar: preenche chassi e calibração se estiverem vazios e confere o nível do tanque. */
     private suspend fun identifyAndCheckFuel(e: Elm327) {
         val info = e.vehicleInfo(Modules.ENGINE)
@@ -326,13 +499,14 @@ class ObdViewModel(app: Application) : AndroidViewModel(app) {
         updateGarage { it.copy(lastFuelLevelPct = level, lastFuelLevelAt = System.currentTimeMillis()) }
     }
 
-    /** Junta as sessões gravadas e a garagem num .zip para compartilhar. */
+    /** Junta as sessões gravadas, a garagem e os vencimentos num .zip para compartilhar. */
     fun exportZip(): File {
         val out = File(getApplication<Application>().cacheDir, "obd-livre-sessoes.zip")
         ZipOutputStream(out.outputStream()).use { zip ->
-            if (garageFile.exists()) {
-                zip.putNextEntry(ZipEntry(garageFile.name))
-                garageFile.inputStream().use { it.copyTo(zip) }
+            for (f in listOf(garageFile, deadlinesFile)) {
+                if (!f.exists()) continue
+                zip.putNextEntry(ZipEntry(f.name))
+                f.inputStream().use { it.copyTo(zip) }
                 zip.closeEntry()
             }
             sessionsDir.listFiles()?.sortedBy { it.name }?.forEach { f ->
@@ -346,10 +520,17 @@ class ObdViewModel(app: Application) : AndroidViewModel(app) {
 
     companion object {
         const val FUEL_LEVEL_PID = 0x2F
+        private const val LABEL_LIVE = "Ao vivo"
+        private const val LABEL_LID = "Explorar 21"
+        private const val KEY_ADDRESS = "ultimo_adaptador"
+        private const val KEY_BLE = "ultimo_adaptador_ble"
+        private const val KEY_NAME = "ultimo_adaptador_nome"
     }
 
     override fun onCleared() {
         scanner.stop()
+        stopReconnect()
+        watchdog?.cancel()
         job?.cancel()
         runCatching { recorder?.close() }
     }
