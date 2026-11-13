@@ -64,7 +64,7 @@ private fun num(v: Double?, decimals: Int = 1): String =
 
 private fun money(v: Double?): String = v?.let { String.format(ptBR, "R$ %,.2f", it) } ?: "—"
 
-private enum class GarageTab(val label: String) { CAR("Carro"), FUEL("Abastecimentos"), MAINT("Manutenção") }
+private enum class GarageTab(val label: String) { CAR("Carro"), FUEL("Abastecimentos"), MAINT("Manutenção"), DEADLINES("Vencimentos") }
 
 @Composable
 fun GarageScreen(vm: ObdViewModel) {
@@ -81,6 +81,7 @@ fun GarageScreen(vm: ObdViewModel) {
             GarageTab.CAR -> VehicleForm(data.vehicle, vm::updateVehicle)
             GarageTab.FUEL -> FuelSection(vm, data)
             GarageTab.MAINT -> MaintenanceSection(vm, data)
+            GarageTab.DEADLINES -> DeadlinesSection(vm)
         }
     }
 }
