@@ -97,15 +97,16 @@ class MainActivity : ComponentActivity() {
 }
 
 private enum class Tab(val label: String) {
-    CONNECT("Conexão"), DISCOVERY("Descoberta"), LIVE("Ao vivo"), DTC("Falhas"), LID("Explorar 21"), LOG("Registro")
+    CONNECT("Conexão"), GARAGE("Garagem"), DISCOVERY("Descoberta"), LIVE("Ao vivo"), DTC("Falhas"), LID("Explorar 21"), LOG("Registro")
 }
 
 @Composable
 private fun App(vm: ObdViewModel, shareText: (String) -> Unit, shareZip: () -> Unit) {
     var tab by remember { mutableStateOf(Tab.CONNECT) }
     val busy by vm.busy.collectAsState()
+    RefuelDialog(vm)
     Row(Modifier.fillMaxSize()) {
-        NavigationRail {
+        NavigationRail(Modifier.verticalScroll(rememberScrollState())) {
             Spacer(Modifier.height(8.dp))
             Tab.entries.forEach { t ->
                 NavigationRailItem(
@@ -126,6 +127,7 @@ private fun App(vm: ObdViewModel, shareText: (String) -> Unit, shareZip: () -> U
             }
             when (tab) {
                 Tab.CONNECT -> ConnectScreen(vm)
+                Tab.GARAGE -> GarageScreen(vm)
                 Tab.DISCOVERY -> DiscoveryScreen(vm, shareText, shareZip)
                 Tab.LIVE -> LiveScreen(vm)
                 Tab.DTC -> DtcScreen(vm)
@@ -133,6 +135,23 @@ private fun App(vm: ObdViewModel, shareText: (String) -> Unit, shareZip: () -> U
                 Tab.LOG -> LogScreen(vm)
             }
         }
+    }
+}
+
+@Composable
+private fun RefuelDialog(vm: ObdViewModel) {
+    val prompt by vm.refuel.collectAsState()
+    val garage by vm.garage.collectAsState()
+    prompt?.let { p ->
+        FuelDialog(
+            initial = null,
+            suggestedOdometer = io.github.obdlivre.core.Garage.currentOdometer(garage),
+            suggestedLiters = p.suggestedLiters,
+            onDismiss = vm::dismissRefuel,
+            onSave = { vm.saveFuel(it); vm.dismissRefuel() },
+            onDelete = null,
+            title = "Abastecimento detectado: %.0f%% → %.0f%%".format(Locale.ROOT, p.fromPct, p.toPct),
+        )
     }
 }
 
