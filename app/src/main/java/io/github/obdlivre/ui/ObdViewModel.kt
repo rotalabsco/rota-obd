@@ -12,12 +12,20 @@ import io.github.obdlivre.core.ByteLink
 import io.github.obdlivre.core.Discovery
 import io.github.obdlivre.core.Elm327
 import io.github.obdlivre.core.ElmExchanger
+import io.github.obdlivre.core.FuelEntry
+import io.github.obdlivre.core.Garage
+import io.github.obdlivre.core.GarageData
+import io.github.obdlivre.core.GarageStore
+import io.github.obdlivre.core.MaintenanceItem
+import io.github.obdlivre.core.MaintenanceRecord
 import io.github.obdlivre.core.Module
 import io.github.obdlivre.core.Modules
 import io.github.obdlivre.core.NdjsonRecorder
 import io.github.obdlivre.core.ObdPids
 import io.github.obdlivre.core.ObdResult
 import io.github.obdlivre.core.SimulatedLink
+import io.github.obdlivre.core.Vehicle
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
@@ -52,6 +60,9 @@ data class LidWatch(
     val last: String = "",
 )
 
+/** O tanque subiu desde a última leitura: provável abastecimento. */
+data class RefuelPrompt(val fromPct: Double, val toPct: Double, val suggestedLiters: Double?)
+
 class ObdViewModel(app: Application) : AndroidViewModel(app) {
     val scanner = DeviceScanner(app)
 
@@ -82,6 +93,12 @@ class ObdViewModel(app: Application) : AndroidViewModel(app) {
     private var job: Job? = null
 
     val sessionsDir: File = File(app.getExternalFilesDir(null) ?: app.filesDir, "sessoes").apply { mkdirs() }
+    private val garageFile = File(app.getExternalFilesDir(null) ?: app.filesDir, "garagem.json")
+    private val garageStore = GarageStore(garageFile)
+    private val _garage = MutableStateFlow(garageStore.load())
+    val garage: StateFlow<GarageData> = _garage
+    private val _refuel = MutableStateFlow<RefuelPrompt?>(null)
+    val refuel: StateFlow<RefuelPrompt?> = _refuel
 
     private fun log(line: String) {
         val time = SimpleDateFormat("HH:mm:ss.SSS", Locale.ROOT).format(Date())
@@ -118,6 +135,8 @@ class ObdViewModel(app: Application) : AndroidViewModel(app) {
                 adapterInfo = info
                 log("Adaptador: ${info.version} | ${info.voltage} | protocolo ${info.protocol}")
                 _conn.value = ConnState.Connected(name, "$detail · ${info.version} · protocolo ${info.protocol}")
+                // Roda como operação exclusiva para não disputar o adaptador com a próxima ação do usuário.
+                exclusive("Identificação do carro") { identifyAndCheckFuel(it) }
             } catch (ex: CancellationException) {
                 throw ex
             } catch (ex: Exception) {
@@ -210,6 +229,10 @@ class ObdViewModel(app: Application) : AndroidViewModel(app) {
                 if (p in slow && round % 10 != 0) continue
                 val (_, v) = e.readPid(Modules.ENGINE, p)
                 values[p] = values[p]!!.copy(value = v)
+                if (p == FUEL_LEVEL_PID && v != null) {
+                    val stored = _garage.value.lastFuelLevelPct
+                    if (stored == null || kotlin.math.abs(v - stored) >= 1.0) recordFuelLevel(v)
+                }
                 _live.value = values.values.toList()
             }
             round++
@@ -257,10 +280,61 @@ class ObdViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
-    /** Junta as sessões gravadas num .zip para compartilhar. */
+    // ---------- Garagem ----------
+
+    private fun updateGarage(change: (GarageData) -> GarageData) {
+        val next = change(_garage.value)
+        _garage.value = next
+        viewModelScope.launch(Dispatchers.IO) { garageStore.save(next) }
+    }
+
+    fun updateVehicle(v: Vehicle) = updateGarage { it.copy(vehicle = v) }
+    fun saveFuel(e: FuelEntry) = updateGarage { d -> d.copy(fuel = d.fuel.filterNot { it.id == e.id } + e) }
+    fun deleteFuel(id: String) = updateGarage { d -> d.copy(fuel = d.fuel.filterNot { it.id == id }) }
+    fun saveItem(i: MaintenanceItem) = updateGarage { d ->
+        val idx = d.items.indexOfFirst { it.id == i.id }
+        d.copy(items = if (idx < 0) d.items + i else d.items.toMutableList().also { it[idx] = i })
+    }
+    fun deleteItem(id: String) = updateGarage { d -> d.copy(items = d.items.filterNot { it.id == id }) }
+    fun addRecord(r: MaintenanceRecord) = updateGarage { d -> d.copy(records = d.records + r) }
+    fun deleteRecord(id: String) = updateGarage { d -> d.copy(records = d.records.filterNot { it.id == id }) }
+    fun dismissRefuel() {
+        _refuel.value = null
+    }
+
+    /** Ao conectar: preenche chassi e calibração se estiverem vazios e confere o nível do tanque. */
+    private suspend fun identifyAndCheckFuel(e: Elm327) {
+        val info = e.vehicleInfo(Modules.ENGINE)
+        val v = _garage.value.vehicle
+        val vin = v.vin.ifBlank { info["VIN"].orEmpty() }
+        val cal = v.calibration.ifBlank { info["Calibração"].orEmpty() }
+        if (vin != v.vin || cal != v.calibration) {
+            updateGarage { it.copy(vehicle = it.vehicle.copy(vin = vin, calibration = cal)) }
+            log("Carro identificado: chassi $vin, calibração $cal")
+        }
+        val (_, level) = e.readPid(Modules.ENGINE, FUEL_LEVEL_PID)
+        if (level != null) recordFuelLevel(level) else log("A ECU não informa o nível do tanque (PID 2F)")
+    }
+
+    private fun recordFuelLevel(level: Double) {
+        val previous = _garage.value.lastFuelLevelPct
+        if (Garage.looksLikeRefuel(previous, level) && _refuel.value == null) {
+            val tank = _garage.value.vehicle.tankLiters
+            _refuel.value = RefuelPrompt(previous!!, level, tank?.let { (level - previous) / 100.0 * it })
+            log("Tanque subiu de %.0f%% para %.0f%%".format(Locale.ROOT, previous, level))
+        }
+        updateGarage { it.copy(lastFuelLevelPct = level, lastFuelLevelAt = System.currentTimeMillis()) }
+    }
+
+    /** Junta as sessões gravadas e a garagem num .zip para compartilhar. */
     fun exportZip(): File {
         val out = File(getApplication<Application>().cacheDir, "obd-livre-sessoes.zip")
         ZipOutputStream(out.outputStream()).use { zip ->
+            if (garageFile.exists()) {
+                zip.putNextEntry(ZipEntry(garageFile.name))
+                garageFile.inputStream().use { it.copyTo(zip) }
+                zip.closeEntry()
+            }
             sessionsDir.listFiles()?.sortedBy { it.name }?.forEach { f ->
                 zip.putNextEntry(ZipEntry(f.name))
                 f.inputStream().use { it.copyTo(zip) }
@@ -268,6 +342,10 @@ class ObdViewModel(app: Application) : AndroidViewModel(app) {
             }
         }
         return out
+    }
+
+    companion object {
+        const val FUEL_LEVEL_PID = 0x2F
     }
 
     override fun onCleared() {
