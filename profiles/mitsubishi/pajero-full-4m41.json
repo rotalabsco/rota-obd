@@ -1,0 +1,11 @@
+{
+  "id": "mitsubishi-pajero-full-4m41",
+  "vehicle": "Mitsubishi Pajero Full 3.2 DI-D (4M41), 2013/14, câmbio automático",
+  "status": "em descoberta",
+  "match": {
+    "vin_prefix": ["JMYLYV"],
+    "calibration": ["1860C02202"]
+  },
+  "bus": { "protocol": "ISO 15765-4 CAN 11 bits 500 kbps", "engine": "7E0/7E8", "transmission": "7E1/7E9" },
+  "signals": []
+}
