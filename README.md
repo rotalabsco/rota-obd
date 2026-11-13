@@ -1,6 +1,6 @@
-# OBD Livre
+# Rota.OBD
 
-App Android de código aberto para ler o seu carro por um adaptador OBD-II ELM327: dados em tempo real,
+App Android de código aberto da [RotaLabs](https://rotalabs.co) para ler o seu carro por um adaptador OBD-II ELM327: dados em tempo real,
 códigos de falha e, principalmente, os **dados do fabricante** que os apps comerciais escondem atrás
 de assinatura.
 
@@ -29,7 +29,7 @@ entra como um **perfil** descoberto pela comunidade.
 
 ## Instalar
 
-1. Baixe o `obd-livre-debug.apk` em **Releases → Versão de teste** (gerado automaticamente a cada mudança).
+1. Baixe o `rota-obd-debug.apk` em **Releases → Versão de teste** (gerado automaticamente a cada mudança).
 2. Na central, permita instalar de fontes desconhecidas e abra o APK.
 3. Feche o Car Scanner/Torque: o adaptador aceita uma conexão por vez.
 4. Ignição ligada → **Conexão → Procurar adaptadores** → toque no seu adaptador.
@@ -63,7 +63,7 @@ alteram a central (2E, 2F, 31, 27) não são enviados. Não use a tela enquanto 
 Kotlin + Jetpack Compose, sem dependências além do AndroidX.
 
 ```
-app/src/main/java/io/github/obdlivre/
+app/src/main/java/co/rotalabs/obd/
   core/      protocolo ELM327, parser ISO-TP, PIDs, DTCs, descoberta, gravação (sem Android, testável)
   android/   transporte BLE e Bluetooth clássico, busca de dispositivos
   ui/        telas Compose e ViewModel

@@ -33,12 +33,12 @@ jobs:
           gradle --no-daemon testDebugUnitTest assembleDebug 2>&1 | tee build.log
 
       - name: Preparar APK
-        run: cp app/build/outputs/apk/debug/app-debug.apk obd-livre-debug.apk
+        run: cp app/build/outputs/apk/debug/app-debug.apk rota-obd-debug.apk
 
       - uses: actions/upload-artifact@v4
         with:
-          name: obd-livre-debug
-          path: obd-livre-debug.apk
+          name: rota-obd-debug
+          path: rota-obd-debug.apk
 
       - name: Publicar versão de teste
         if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
@@ -46,7 +46,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           gh release delete latest --yes --cleanup-tag || true
-          gh release create latest obd-livre-debug.apk \
+          gh release create latest rota-obd-debug.apk \
             --prerelease \
             --title "Versão de teste #${{ github.run_number }}" \
             --notes "APK de depuração gerado automaticamente a partir de ${{ github.sha }}. Instale na central e permita fontes desconhecidas."

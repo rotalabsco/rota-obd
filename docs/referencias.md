@@ -1,6 +1,6 @@
 # Referências
 
-O que foi consultado para desenhar o OBD Livre e o que foi aproveitado de cada fonte. Nenhum código de
+O que foi consultado para desenhar o Rota.OBD e o que foi aproveitado de cada fonte. Nenhum código de
 terceiros foi copiado: o projeto todo é escrito do zero e licenciado em MIT.
 
 ## Projetos de código aberto

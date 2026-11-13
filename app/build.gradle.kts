@@ -5,11 +5,11 @@ plugins {
 }
 
 android {
-    namespace = "io.github.obdlivre"
+    namespace = "co.rotalabs.obd"
     compileSdk = 35
 
     defaultConfig {
-        applicationId = "io.github.obdlivre"
+        applicationId = "co.rotalabs.obd"
         minSdk = 26
         targetSdk = 34
         versionCode = (System.getenv("GITHUB_RUN_NUMBER")?.toIntOrNull() ?: 1)

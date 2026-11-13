@@ -1,6 +1,6 @@
 # Formato dos dados gravados
 
-Tudo fica na pasta do app no armazenamento externo (`Android/data/io.github.obdlivre/files/`) e vai junto
+Tudo fica na pasta do app no armazenamento externo (`Android/data/co.rotalabs.obd/files/`) e vai junto
 no `.zip` de "Exportar sessões".
 
 ## Sessões: `sessoes/sessao_AAAA-MM-DD_HH-mm-ss.ndjson`

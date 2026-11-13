@@ -33,7 +33,7 @@ permissão de workflow está em "Read and write".
 
 ## Instalar na central
 
-1. Baixar `obd-livre-debug.apk` em Releases.
+1. Baixar `rota-obd-debug.apk` em Releases.
 2. Copiar por pendrive ou baixar direto na central e abrir com o gerenciador de arquivos.
 3. Permitir instalação de fontes desconhecidas.
 

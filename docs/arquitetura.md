@@ -3,7 +3,7 @@
 Kotlin + Jetpack Compose, um único módulo (`app`), sem dependências além de AndroidX e coroutines.
 
 ```
-app/src/main/java/io/github/obdlivre/
+app/src/main/java/co/rotalabs/obd/
   core/       Kotlin puro (sem Android): protocolo, cálculos e arquivos. Testável no JVM.
     ElmLink.kt        ByteLink (canal de bytes) e ElmExchanger (pergunta → resposta até o '>')
     ElmParser.kt      interpreta respostas: quadro único, multiquadro ISO-TP, negativas, erros
@@ -61,7 +61,7 @@ pontos ou mais abre o formulário de abastecimento com litros estimados (se o ta
 
 ## Testes
 
-`app/src/test/java/io/github/obdlivre/core/`:
+`app/src/test/java/co/rotalabs/obd/core/`:
 - `CoreTest`: parser, ISO-TP, negativas, DTCs, mapa de PIDs, descoberta contra o simulador, JSON.
 - `GarageTest`: consumo tanque a tanque, estado de manutenção, JSON, arquivo corrompido, números em pt-BR.
 - `SleepAndDeadlinesTest`: tensão do ATRV, regras do modo de espera, vencimentos.

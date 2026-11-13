@@ -12,5 +12,5 @@ dependencyResolutionManagement {
         mavenCentral()
     }
 }
-rootProject.name = "obd-livre"
+rootProject.name = "rota-obd"
 include(":app")
