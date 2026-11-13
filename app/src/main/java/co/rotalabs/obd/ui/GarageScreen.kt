@@ -1,10 +1,14 @@
 package co.rotalabs.obd.ui
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.RowScope
+import androidx.compose.foundation.layout.defaultMinSize
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -39,6 +43,10 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.text.style.TextAlign
+import co.rotalabs.obd.ui.theme.Rl
+import co.rotalabs.obd.ui.theme.RlIcons
+import co.rotalabs.obd.ui.theme.RlType
 import co.rotalabs.obd.core.DueState
 import co.rotalabs.obd.core.FuelEntry
 import co.rotalabs.obd.core.Garage
@@ -53,6 +61,7 @@ import java.util.Locale
 
 private val ptBR = Locale("pt", "BR")
 private fun dateText(millis: Long) = SimpleDateFormat("dd/MM/yyyy", ptBR).format(Date(millis))
+private fun shortDate(millis: Long) = SimpleDateFormat("dd/MM", ptBR).format(Date(millis))
 private fun parseDate(s: String): Long? = runCatching {
     SimpleDateFormat("dd/MM/yyyy", ptBR).apply { isLenient = false }.parse(s.trim())?.time
 }.getOrNull()
@@ -64,25 +73,40 @@ private fun num(v: Double?, decimals: Int = 1): String =
 
 private fun money(v: Double?): String = v?.let { String.format(ptBR, "R$ %,.2f", it) } ?: "—"
 
-private enum class GarageTab(val label: String) { CAR("Carro"), FUEL("Abastecimentos"), MAINT("Manutenção"), DEADLINES("Vencimentos") }
+private enum class GarageTab(val label: String) { FUEL("Consumo"), MAINT("Manutenção"), DEADLINES("Vencimentos"), CAR("Carro") }
 
 @Composable
 fun GarageScreen(vm: ObdViewModel) {
     val data by vm.garage.collectAsState()
     var tab by remember { mutableStateOf(GarageTab.FUEL) }
-    Column {
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            GarageTab.entries.forEach { t ->
-                if (t == tab) Button(onClick = {}) { Text(t.label) } else OutlinedButton(onClick = { tab = t }) { Text(t.label) }
+    var creating by remember { mutableStateOf(false) }
+    val v = data.vehicle
+    val odo = Garage.currentOdometer(data)
+    Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
+        ScreenHeader(listOfNotNull("Garagem", v.plate.ifBlank { null }, v.fuel.ifBlank { null }).joinToString(" · "), v.name) {
+            odo?.let {
+                Column(horizontalAlignment = Alignment.End) {
+                    Text("${num(it, 0)} km", style = RlType.metric, fontSize = 24.sp, color = Rl.text)
+                    Text("hodômetro estimado", style = MaterialTheme.typography.bodySmall, color = Rl.text3)
+                }
+            }
+            PrimaryButton("Abastecimento", { creating = true }, icon = RlIcons.fuel)
+        }
+        PillTabs(GarageTab.entries, tab, { it.label }, { tab = it })
+        Box(Modifier.weight(1f)) {
+            when (tab) {
+                GarageTab.CAR -> VehicleForm(data.vehicle, vm::updateVehicle)
+                GarageTab.FUEL -> FuelSection(vm, data)
+                GarageTab.MAINT -> MaintenanceSection(vm, data)
+                GarageTab.DEADLINES -> DeadlinesSection(vm)
             }
         }
-        Spacer(Modifier.height(12.dp))
-        when (tab) {
-            GarageTab.CAR -> VehicleForm(data.vehicle, vm::updateVehicle)
-            GarageTab.FUEL -> FuelSection(vm, data)
-            GarageTab.MAINT -> MaintenanceSection(vm, data)
-            GarageTab.DEADLINES -> DeadlinesSection(vm)
-        }
+    }
+    if (creating) {
+        FuelDialog(
+            initial = null, suggestedOdometer = odo, suggestedLiters = null,
+            onDismiss = { creating = false }, onSave = { vm.saveFuel(it); creating = false }, onDelete = null,
+        )
     }
 }
 
@@ -113,7 +137,7 @@ private fun VehicleForm(v: Vehicle, onSave: (Vehicle) -> Unit) {
             "Chassi e calibração são lidos do carro automaticamente ao conectar.",
             style = MaterialTheme.typography.bodySmall,
         )
-        Button(onClick = {
+        PrimaryButton("Salvar", {
             onSave(
                 v.copy(
                     name = name.ifBlank { "Meu carro" }, plate = plate.trim(), fuel = fuel.trim(),
@@ -121,7 +145,7 @@ private fun VehicleForm(v: Vehicle, onSave: (Vehicle) -> Unit) {
                     vin = vin.trim(), calibration = cal.trim(),
                 ),
             )
-        }) { Text("Salvar") }
+        })
     }
 }
 
@@ -135,10 +159,13 @@ private fun NumberField(value: String, onChange: (String) -> Unit, label: String
 
 @Composable
 private fun Stat(label: String, value: String, modifier: Modifier = Modifier) {
-    Card(modifier) {
-        Column(Modifier.padding(12.dp)) {
-            Text(label, style = MaterialTheme.typography.bodySmall)
-            Text(value, fontSize = 26.sp, fontWeight = FontWeight.Bold)
+    RlCard(modifier, padding = androidx.compose.foundation.layout.PaddingValues(horizontal = 18.dp, vertical = 14.dp)) {
+        Text(label, style = MaterialTheme.typography.bodyMedium, color = Rl.text2)
+        Spacer(Modifier.height(6.dp))
+        androidx.compose.foundation.layout.BoxWithConstraints(Modifier.fillMaxWidth()) {
+            // Encolhe para caber na largura (Geist Mono: ~0,62 em por caractere).
+            val size = minOf(30f, maxWidth.value / (value.length * 0.62f + 0.4f)).sp
+            Text(value, style = RlType.metric, fontSize = size, color = Rl.text, maxLines = 1, softWrap = false)
         }
     }
 }
@@ -147,55 +174,48 @@ private fun Stat(label: String, value: String, modifier: Modifier = Modifier) {
 private fun FuelSection(vm: ObdViewModel, data: GarageData) {
     val summary = remember(data.fuel) { Garage.fuelSummary(data.fuel) }
     var editing by remember { mutableStateOf<FuelEntry?>(null) }
-    var creating by remember { mutableStateOf(false) }
-    Column {
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            Stat("Média", "${num(summary.averageKmPerLiter)} km/L", Modifier.weight(1f))
-            Stat("Último tanque", "${num(summary.lastKmPerLiter)} km/L", Modifier.weight(1f))
-            Stat("Custo por km", money(summary.averageCostPerKm), Modifier.weight(1f))
-            Stat("Total gasto", money(summary.totalSpent), Modifier.weight(1f))
-        }
-        Spacer(Modifier.height(8.dp))
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Button(onClick = { creating = true }) { Text("Novo abastecimento") }
-            Spacer(Modifier.width(12.dp))
-            Text(
-                "O consumo é medido de tanque cheio a tanque cheio.",
-                style = MaterialTheme.typography.bodySmall,
-            )
-        }
-        Spacer(Modifier.height(8.dp))
-        LazyColumn {
-            items(data.fuel.sortedByDescending { it.dateMillis }, key = { it.id }) { e ->
-                Card(Modifier.fillMaxWidth().padding(vertical = 3.dp)) {
-                    Row(Modifier.padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
-                        Column(Modifier.weight(1f)) {
-                            Text(
-                                "${dateText(e.dateMillis)} · ${num(e.odometerKm, 0)} km · ${num(e.liters, 2)} L" +
-                                    if (e.fullTank) " · cheio" else " · parcial",
-                                fontWeight = FontWeight.Bold,
-                            )
-                            Text(
-                                "${money(e.totalPrice)} · ${money(e.pricePerLiter)}/L" +
-                                    (if (e.station.isNotBlank()) " · ${e.station}" else ""),
-                                style = MaterialTheme.typography.bodySmall,
-                            )
-                        }
-                        TextButton(onClick = { editing = e }) { Text("Editar") }
-                    }
-                }
+    val entries = data.fuel.sortedByDescending { it.dateMillis }
+    LazyColumn(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        item {
+            Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                Stat("Média", summary.averageKmPerLiter?.let { "${num(it)} km/L" } ?: "—", Modifier.weight(1f))
+                Stat("Último tanque", summary.lastKmPerLiter?.let { "${num(it)} km/L" } ?: "—", Modifier.weight(1f))
+                Stat("Custo por km", money(summary.averageCostPerKm), Modifier.weight(1f))
+                Stat("Total gasto", money(summary.totalSpent), Modifier.weight(1f))
             }
         }
-    }
-    if (creating) {
-        FuelDialog(
-            initial = null,
-            suggestedOdometer = Garage.currentOdometer(data),
-            suggestedLiters = null,
-            onDismiss = { creating = false },
-            onSave = { vm.saveFuel(it); creating = false },
-            onDelete = null,
-        )
+        if (summary.segments.isNotEmpty()) item { ConsumptionChart(summary.segments.takeLast(8), summary.averageKmPerLiter) }
+        if (entries.isEmpty()) {
+            item {
+                EmptyState(
+                    "Nenhum abastecimento",
+                    "O consumo é medido de tanque cheio a tanque cheio. Registre ao abastecer, ou confirme quando o app " +
+                        "perceber que o tanque subiu.",
+                )
+            }
+        }
+        items(entries, key = { it.id }) { e ->
+            Row(
+                Modifier.fillMaxWidth().defaultMinSize(minHeight = 64.dp)
+                    .background(Rl.raised, RoundedCornerShape(Rl.radiusMd))
+                    .border(1.dp, Rl.line, RoundedCornerShape(Rl.radiusMd))
+                    .clickable { editing = e }
+                    .padding(horizontal = 18.dp, vertical = 10.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(16.dp),
+            ) {
+                Text(shortDate(e.dateMillis), style = RlType.mono, color = Rl.text3)
+                Column(Modifier.weight(1f)) {
+                    Text(
+                        e.station.ifBlank { "Abastecimento" } + if (e.fullTank) " · tanque cheio" else " · parcial",
+                        style = MaterialTheme.typography.bodyLarge, color = Rl.text, maxLines = 1,
+                    )
+                    Text("${num(e.odometerKm, 0)} km" + (e.pricePerLiter?.let { " · ${money(it)}/L" } ?: ""), style = RlType.mono, fontSize = 13.sp, color = Rl.text3)
+                }
+                Text("${num(e.liters, 2)} L", style = RlType.mono, fontSize = 16.sp, color = Rl.text2)
+                Text(money(e.totalPrice), style = RlType.mono, fontSize = 16.sp, color = Rl.text)
+            }
+        }
     }
     editing?.let { e ->
         FuelDialog(
@@ -204,6 +224,46 @@ private fun FuelSection(vm: ObdViewModel, data: GarageData) {
             onSave = { vm.saveFuel(it); editing = null },
             onDelete = { vm.deleteFuel(e.id); editing = null },
         )
+    }
+}
+
+/** Barras de km/L por tanque; a última em laranja, linha tracejada na média. */
+@Composable
+private fun ConsumptionChart(segments: List<co.rotalabs.obd.core.ConsumptionSegment>, average: Double?) {
+    val values = segments.map { it.kmPerLiter }
+    val top = (values.maxOrNull() ?: 1.0) * 1.08
+    val floor = (values.minOrNull() ?: 0.0) * 0.8
+    val chartH = 150.dp
+    fun h(v: Double) = (((v - floor) / (top - floor)).coerceIn(0.05, 1.0) * chartH.value).dp
+    RlCard(Modifier.fillMaxWidth()) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text("Consumo tanque a tanque", Modifier.weight(1f), style = MaterialTheme.typography.titleSmall, color = Rl.text)
+            average?.let { Text("média ${num(it)} km/L", style = RlType.mono, fontSize = 13.sp, color = Rl.text3) }
+        }
+        Spacer(Modifier.height(12.dp))
+        Row(
+            Modifier.fillMaxWidth().height(chartH + 24.dp).border(width = 0.dp, color = Color.Transparent),
+            horizontalArrangement = Arrangement.spacedBy(14.dp),
+            verticalAlignment = Alignment.Bottom,
+        ) {
+            segments.forEachIndexed { i, seg ->
+                val last = i == segments.lastIndex
+                Column(Modifier.weight(1f), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                    Text(num(seg.kmPerLiter), style = RlType.mono, fontSize = 13.sp, color = if (last) Rl.accent else Rl.text2)
+                    Box(
+                        Modifier.fillMaxWidth().height(h(seg.kmPerLiter))
+                            .background(if (last) Rl.orange else Rl.lineStrong, RoundedCornerShape(topStart = 4.dp, topEnd = 4.dp)),
+                    )
+                }
+            }
+        }
+        Box(Modifier.fillMaxWidth().height(1.dp).background(Rl.lineStrong))
+        Spacer(Modifier.height(6.dp))
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(14.dp)) {
+            segments.forEach { seg ->
+                Text(shortDate(seg.toMillis), Modifier.weight(1f), style = RlType.mono, fontSize = 12.sp, color = Rl.text3, textAlign = TextAlign.Center)
+            }
+        }
     }
 }
 
@@ -283,30 +343,30 @@ private fun MaintenanceSection(vm: ObdViewModel, data: GarageData) {
     var doneFor by remember { mutableStateOf<MaintenanceItem?>(null) }
     Column {
         Row(verticalAlignment = Alignment.CenterVertically) {
-            Button(onClick = { newItem = true }) { Text("Novo item") }
+            SecondaryButton("Novo item", { newItem = true }, icon = RlIcons.plus)
             Spacer(Modifier.width(12.dp))
             Text(
-                "Defina os intervalos conforme o manual da sua Pajero.",
-                style = MaterialTheme.typography.bodySmall,
+                "Defina os intervalos conforme o manual do seu carro.",
+                style = MaterialTheme.typography.bodySmall, color = Rl.text3,
             )
         }
         Spacer(Modifier.height(8.dp))
-        LazyColumn {
+        LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp)) {
             items(statuses.sortedBy { it.state.ordinal.let { o -> listOf(2, 1, 0, 3, 4)[o] } }, key = { it.item.id }) { s ->
                 MaintenanceRow(s, onEdit = { editItem = s.item }, onDone = { doneFor = s.item })
             }
             val history = data.records.sortedByDescending { it.dateMillis }
             if (history.isNotEmpty()) {
-                item { Text("Histórico", fontWeight = FontWeight.Bold, modifier = Modifier.padding(top = 12.dp, bottom = 4.dp)) }
+                item { Overline("Histórico", modifier = Modifier.padding(top = 16.dp, bottom = 6.dp)) }
                 items(history, key = { "r" + it.id }) { r ->
                     val name = data.items.firstOrNull { it.id == r.itemId }?.name ?: "Outro"
                     Row(Modifier.padding(vertical = 3.dp), verticalAlignment = Alignment.CenterVertically) {
                         Text(
                             "${dateText(r.dateMillis)} · $name · ${num(r.odometerKm, 0)} km · ${money(r.cost)}" +
                                 (if (r.description.isNotBlank()) " · ${r.description}" else ""),
-                            Modifier.weight(1f),
+                            Modifier.weight(1f), style = MaterialTheme.typography.bodyMedium, color = Rl.text2,
                         )
-                        TextButton(onClick = { vm.deleteRecord(r.id) }) { Text("Excluir") }
+                        GhostButton("Excluir", { vm.deleteRecord(r.id) })
                     }
                 }
             }
@@ -323,12 +383,12 @@ private fun MaintenanceSection(vm: ObdViewModel, data: GarageData) {
 
 @Composable
 private fun MaintenanceRow(s: MaintenanceStatus, onEdit: () -> Unit, onDone: () -> Unit) {
-    val (color, text) = when (s.state) {
-        DueState.OVERDUE -> Color(0xFFE5484D) to "Vencida"
-        DueState.SOON -> Color(0xFFF5A524) to "Em breve"
-        DueState.OK -> Color(0xFF46A758) to "Em dia"
-        DueState.NEVER_DONE -> Color(0xFF8E8E93) to "Sem registro"
-        DueState.NO_INTERVAL -> Color(0xFF8E8E93) to "Sem intervalo"
+    val (tone, text) = when (s.state) {
+        DueState.OVERDUE -> Tone.DANGER to "Vencida"
+        DueState.SOON -> Tone.WARNING to "Em breve"
+        DueState.OK -> Tone.NORMAL to "Em dia"
+        DueState.NEVER_DONE -> Tone.MISSING to "Sem registro"
+        DueState.NO_INTERVAL -> Tone.MISSING to "Sem intervalo"
     }
     val detail = buildList {
         s.remainingKm?.let { add(if (it >= 0) "faltam ${num(it, 0)} km" else "passou ${num(-it, 0)} km") }
@@ -343,17 +403,36 @@ private fun MaintenanceRow(s: MaintenanceStatus, onEdit: () -> Unit, onDone: () 
         }
         s.lastRecord?.let { add("última: ${dateText(it.dateMillis)}") }
     }.joinToString(" · ")
-    Card(Modifier.fillMaxWidth().padding(vertical = 3.dp)) {
-        Row(Modifier.padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
-            Box(Modifier.size(12.dp).background(color, RoundedCornerShape(6.dp)))
-            Spacer(Modifier.width(10.dp))
-            Column(Modifier.weight(1f)) {
-                Text("${s.item.name} · $text", fontWeight = FontWeight.Bold)
-                if (detail.isNotEmpty()) Text(detail, style = MaterialTheme.typography.bodySmall)
+    StatusRow(s.item.name, text, tone, detail) {
+        GhostButton("Editar", onEdit)
+        SecondaryButton("Feito", onDone, icon = RlIcons.check)
+    }
+}
+
+/** Linha de item com prazo (manutenção, vencimento): cor de estado com rótulo, nunca só a cor. */
+@Composable
+fun StatusRow(name: String, state: String, tone: Tone, detail: String, actions: @Composable RowScope.() -> Unit) {
+    val (bg, border) = when (tone) {
+        Tone.DANGER -> Rl.dangerSoft to Rl.dangerLine
+        Tone.WARNING -> Rl.warningSoft to Rl.warningLine
+        else -> Rl.raised to Rl.line
+    }
+    Row(
+        Modifier.fillMaxWidth().defaultMinSize(minHeight = 72.dp)
+            .background(bg, RoundedCornerShape(Rl.radiusMd))
+            .border(1.dp, border, RoundedCornerShape(Rl.radiusMd))
+            .padding(start = 18.dp, end = 10.dp, top = 10.dp, bottom = 10.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(12.dp),
+    ) {
+        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                Text(name, style = MaterialTheme.typography.titleMedium, color = Rl.text)
+                Badge(state, tone = tone)
             }
-            TextButton(onClick = onEdit) { Text("Editar") }
-            TextButton(onClick = onDone) { Text("Feito") }
+            if (detail.isNotEmpty()) Text(detail, style = MaterialTheme.typography.bodySmall, color = Rl.text2)
         }
+        actions()
     }
 }
 

@@ -34,6 +34,8 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
+import co.rotalabs.obd.ui.theme.Rl
+import co.rotalabs.obd.ui.theme.RlIcons
 import co.rotalabs.obd.core.Deadline
 import co.rotalabs.obd.core.DeadlineStatus
 import co.rotalabs.obd.core.Deadlines
@@ -59,15 +61,15 @@ fun DeadlinesSection(vm: ObdViewModel) {
     var renewing by remember { mutableStateOf<Deadline?>(null) }
     Column {
         Row(verticalAlignment = Alignment.CenterVertically) {
-            Button(onClick = { creating = true }) { Text("Novo vencimento") }
+            SecondaryButton("Novo vencimento", { creating = true }, icon = RlIcons.plus)
             Spacer(Modifier.width(12.dp))
             Text(
                 "IPVA, licenciamento, seguro, CNH, garantias. \"Pago\" avança para o próximo período.",
-                style = MaterialTheme.typography.bodySmall,
+                style = MaterialTheme.typography.bodySmall, color = Rl.text3,
             )
         }
         Spacer(Modifier.height(8.dp))
-        LazyColumn {
+        LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp)) {
             items(statuses, key = { it.deadline.id }) { s ->
                 DeadlineRow(s, onEdit = { editing = s.deadline }, onRenew = { renewing = s.deadline })
             }
@@ -97,11 +99,11 @@ fun DeadlinesSection(vm: ObdViewModel) {
 @Composable
 private fun DeadlineRow(s: DeadlineStatus, onEdit: () -> Unit, onRenew: () -> Unit) {
     val d = s.deadline
-    val (color, label) = when (s.state) {
-        DueState.OVERDUE -> Color(0xFFE5484D) to "Vencido há ${-(s.daysLeft ?: 0)} dias"
-        DueState.SOON -> Color(0xFFF5A524) to if (s.daysLeft == 0L) "Vence hoje" else "Vence em ${s.daysLeft} dias"
-        DueState.OK -> Color(0xFF46A758) to "Faltam ${s.daysLeft} dias"
-        else -> Color(0xFF8E8E93) to "Sem data"
+    val (tone, label) = when (s.state) {
+        DueState.OVERDUE -> Tone.DANGER to "Vencido há ${-(s.daysLeft ?: 0)} dias"
+        DueState.SOON -> Tone.WARNING to if (s.daysLeft == 0L) "Vence hoje" else "Vence em ${s.daysLeft} dias"
+        DueState.OK -> Tone.NORMAL to "Faltam ${s.daysLeft} dias"
+        else -> Tone.MISSING to "Sem data"
     }
     val detail = listOfNotNull(
         d.dueMillis?.let { fmtDate(it) },
@@ -109,17 +111,9 @@ private fun DeadlineRow(s: DeadlineStatus, onEdit: () -> Unit, onRenew: () -> Un
         fmtMoney(d.amount).ifEmpty { null },
         d.note.ifBlank { null },
     ).joinToString(" · ")
-    Card(Modifier.fillMaxWidth().padding(vertical = 3.dp)) {
-        Row(Modifier.padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
-            Box(Modifier.size(12.dp).background(color, RoundedCornerShape(6.dp)))
-            Spacer(Modifier.width(10.dp))
-            Column(Modifier.weight(1f)) {
-                Text("${d.name} · $label", fontWeight = FontWeight.Bold)
-                if (detail.isNotEmpty()) Text(detail, style = MaterialTheme.typography.bodySmall)
-            }
-            TextButton(onClick = onEdit) { Text("Editar") }
-            if (d.dueMillis != null) TextButton(onClick = onRenew) { Text("Pago") }
-        }
+    StatusRow(d.name, label, tone, detail) {
+        GhostButton("Editar", onEdit)
+        if (d.dueMillis != null) SecondaryButton("Pago", onRenew, icon = RlIcons.check)
     }
 }
 

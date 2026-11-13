@@ -1,7 +1,9 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
+    <!-- Fundo bg-base do RotaLabs DS: evita o flash branco antes do Compose desenhar. -->
     <style name="Theme.RotaObd" parent="android:Theme.Material.NoActionBar">
-        <item name="android:windowBackground">#FF121212</item>
-        <item name="android:statusBarColor">#FF121212</item>
+        <item name="android:windowBackground">@color/rl_bg</item>
+        <item name="android:statusBarColor">@color/rl_bg</item>
+        <item name="android:navigationBarColor">@color/rl_bg</item>
     </style>
 </resources>

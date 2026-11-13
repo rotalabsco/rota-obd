@@ -56,7 +56,8 @@ sealed class ConnState {
     data class Failed(val message: String) : ConnState()
 }
 
-data class LiveValue(val pid: Int, val name: String, val unit: String, val value: Double?)
+/** Uma leitura ao vivo. Sem valor, [status] diz por quê (sem dados, tempo esgotado...): nunca vira zero. */
+data class LiveValue(val pid: Int, val name: String, val unit: String, val value: Double?, val status: String? = null)
 
 data class LidWatch(
     val module: Module,
@@ -93,6 +94,15 @@ class ObdViewModel(app: Application) : AndroidViewModel(app) {
     val watch: StateFlow<LidWatch?> = _watch
     private val _lidsFound = MutableStateFlow<Map<Module, List<Int>>>(emptyMap())
     val lidsFound: StateFlow<Map<Module, List<Int>>> = _lidsFound
+    /** Tensão lida no adaptador (ATRV). */
+    private val _voltage = MutableStateFlow<Double?>(null)
+    val voltage: StateFlow<Double?> = _voltage
+    /** Estado do modo de espera; null sem conexão real (desconectado ou simulador). */
+    private val _sleepMode = MutableStateFlow<SleepPolicy.Mode?>(null)
+    val sleepMode: StateFlow<SleepPolicy.Mode?> = _sleepMode
+    /** Etapa atual da descoberta, para mostrar na tela. */
+    private val _step = MutableStateFlow<String?>(null)
+    val step: StateFlow<String?> = _step
 
     private var link: ByteLink? = null
     private var elm: Elm327? = null
@@ -176,6 +186,7 @@ class ObdViewModel(app: Application) : AndroidViewModel(app) {
             elm = e
             val info = e.initialize()
             adapterInfo = info
+            _voltage.value = SleepPolicy.parseVoltage(info.voltage)
             log("Adaptador: ${info.version} | ${info.voltage} | protocolo ${info.protocol}")
             currentName = name
             currentDetail = "$detail · ${info.version} · protocolo ${info.protocol}"
@@ -268,11 +279,15 @@ class ObdViewModel(app: Application) : AndroidViewModel(app) {
         quiet = false
         val policy = SleepPolicy(System.currentTimeMillis())
         sleepPolicy = policy
+        _sleepMode.value = SleepPolicy.Mode.ACTIVE
         watchdog = viewModelScope.launch {
             while (isActive) {
                 delay(if (quiet) 60_000L else 30_000L)
                 val volts = SleepPolicy.parseVoltage(e.raw("ATRV", 1500))
-                when (policy.observe(System.currentTimeMillis(), volts)) {
+                if (volts != null) _voltage.value = volts
+                val mode = policy.observe(System.currentTimeMillis(), volts)
+                _sleepMode.value = mode
+                when (mode) {
                     SleepPolicy.Mode.ACTIVE -> if (quiet) {
                         quiet = false
                         log("Motor ligado (%.1f V): leituras retomadas".format(Locale.ROOT, volts ?: 0.0))
@@ -316,6 +331,7 @@ class ObdViewModel(app: Application) : AndroidViewModel(app) {
     private suspend fun disconnectInternal() {
         watchdog?.cancel()
         watchdog = null
+        _sleepMode.value = null
         runCatching { link?.close() }
         runCatching { recorder?.close() }
         link = null
@@ -356,8 +372,10 @@ class ObdViewModel(app: Application) : AndroidViewModel(app) {
 
     fun runDiscovery(sweep21: Boolean) = exclusive("Descoberta") { e ->
         _report.value = null
+        _progress.value = 0f
         val reports = Discovery(e, recorder!!) { step, fraction ->
             _progress.value = fraction
+            _step.value = step
             log(step)
         }.run(sweepService21 = sweep21)
         engineSupported = reports.firstOrNull { it.module == Modules.ENGINE }?.supportedPids
@@ -367,6 +385,7 @@ class ObdViewModel(app: Application) : AndroidViewModel(app) {
         val text = Discovery.textReport(adapterInfo, reports)
         File(sessionsDir, "relatorio_${System.currentTimeMillis()}.md").writeText(text)
         _report.value = text
+        _step.value = null
     }
 
     fun startLive() = exclusive(LABEL_LIVE) { e ->
@@ -385,8 +404,8 @@ class ObdViewModel(app: Application) : AndroidViewModel(app) {
         while (kotlin.coroutines.coroutineContext.isActive) {
             for (p in pids) {
                 if (p in slow && round % 10 != 0) continue
-                val (_, v) = e.readPid(Modules.ENGINE, p)
-                values[p] = values[p]!!.copy(value = v)
+                val (r, v) = e.readPid(Modules.ENGINE, p)
+                values[p] = values[p]!!.copy(value = v, status = if (v != null) null else if (r is ObdResult.Ok) "não decodificada · ${r.hex}" else Discovery.describe(r))
                 if (p == FUEL_LEVEL_PID && v != null) {
                     val stored = _garage.value.lastFuelLevelPct
                     if (stored == null || kotlin.math.abs(v - stored) >= 1.0) recordFuelLevel(v)
