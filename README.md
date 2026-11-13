@@ -21,6 +21,11 @@ entra como um **perfil** descoberto pela comunidade.
 - **Explorar 21**: lê um identificador do fabricante sem parar e destaca os bytes que mudam
 - Grava cada leitura em **NDJSON** e exporta tudo em .zip; relatório em texto para compartilhar
 - **Modo demonstração** com um ELM327 simulado, para testar sem carro
+- **Garagem**: carro (chassi e calibração lidos sozinhos), abastecimentos com consumo tanque a tanque,
+  manutenções com aviso por km ou data, e pergunta automática quando o tanque sobe
+- **Vencimentos**: IPVA, licenciamento, seguro, CNH e outros, com aviso antes do prazo
+- **Modo de espera**: pausa as leituras com o motor desligado, solta o adaptador para ele dormir e
+  reconecta sozinho quando o carro liga
 
 ## Instalar
 
@@ -33,7 +38,7 @@ entra como um **perfil** descoberto pela comunidade.
 ## Roteiro
 
 1. **Descoberta** (v0.1): mapear o que a Pajero 4M41 expõe no motor e no câmbio.
-2. **Garagem**: perfil do carro (preenchido pelo VIN), abastecimentos, manutenções com lembrete por km
+2. **Garagem** (feito): perfil do carro (preenchido pelo VIN), abastecimentos, manutenções com lembrete por km
    ou data, e consumo real tanque a tanque. Detecta o abastecimento pela subida do nível de combustível
    e pergunta litros e valor.
 3. **Viagens e consumo**: gravação automática por viagem e consumo instantâneo calculado pelo volume
@@ -63,11 +68,16 @@ app/src/main/java/io/github/obdlivre/
   android/   transporte BLE e Bluetooth clássico, busca de dispositivos
   ui/        telas Compose e ViewModel
 profiles/    perfis por veículo (dados do fabricante)
-docs/        notas de protocolo
+docs/        documentação: referências, arquitetura, protocolo, dados, decisões, build
 ```
 
 Abra a pasta no Android Studio (Gradle 8.11+, JDK 17) ou rode `gradle testDebugUnitTest assembleDebug`.
 Os testes do `core` rodam contra o simulador, sem aparelho.
+
+## Documentação
+
+A pasta [`docs/`](docs/README.md) reúne as referências usadas, a arquitetura, o modo de espera, o
+formato dos dados, a ficha da Pajero 4M41, as decisões de projeto e como compilar.
 
 ## Créditos
 
