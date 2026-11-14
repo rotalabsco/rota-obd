@@ -1,6 +1,6 @@
-# OBD Livre
+# Rota.OBD
 
-App Android de código aberto para ler o seu carro por um adaptador OBD-II ELM327: dados em tempo real,
+App Android de código aberto da [RotaLabs](https://rotalabs.co) para ler o seu carro por um adaptador OBD-II ELM327: dados em tempo real,
 códigos de falha e, principalmente, os **dados do fabricante** que os apps comerciais escondem atrás
 de assinatura.
 
@@ -10,6 +10,16 @@ entra como um **perfil** descoberto pela comunidade.
 
 > Estado: **versão 0.1, fase de descoberta.** Lê tudo o que o carro expõe e grava em arquivo para
 > montarmos os perfis. Consumo real e painel flutuante vêm nas próximas etapas.
+
+## Telas
+
+| Ao vivo | Falhas |
+|---|---|
+| ![Ao vivo](docs/prints/ao-vivo.png) | ![Falhas](docs/prints/falhas.png) |
+| **Garagem** | **Conexão e modo de espera** |
+| ![Garagem](docs/prints/garagem.png) | ![Conexão](docs/prints/conexao.png) |
+
+Capturas do emulador em 1280×720 com o modo demonstração. Valores simulados.
 
 ## O que já faz
 
@@ -29,7 +39,7 @@ entra como um **perfil** descoberto pela comunidade.
 
 ## Instalar
 
-1. Baixe o `obd-livre-debug.apk` em **Releases → Versão de teste** (gerado automaticamente a cada mudança).
+1. Baixe o `rota-obd-debug.apk` em **Releases → Versão de teste** (gerado automaticamente a cada mudança).
 2. Na central, permita instalar de fontes desconhecidas e abra o APK.
 3. Feche o Car Scanner/Torque: o adaptador aceita uma conexão por vez.
 4. Ignição ligada → **Conexão → Procurar adaptadores** → toque no seu adaptador.
@@ -63,7 +73,7 @@ alteram a central (2E, 2F, 31, 27) não são enviados. Não use a tela enquanto 
 Kotlin + Jetpack Compose, sem dependências além do AndroidX.
 
 ```
-app/src/main/java/io/github/obdlivre/
+app/src/main/java/co/rotalabs/obd/
   core/      protocolo ELM327, parser ISO-TP, PIDs, DTCs, descoberta, gravação (sem Android, testável)
   android/   transporte BLE e Bluetooth clássico, busca de dispositivos
   ui/        telas Compose e ViewModel
@@ -81,6 +91,9 @@ formato dos dados, a ficha da Pajero 4M41, as decisões de projeto e como compil
 
 ## Créditos
 
+- Visual: [RotaLabs DS](docs/visual.md). Fontes Bricolage Grotesque, Geist e Geist Mono (SIL Open Font
+  License, textos em `app/src/main/assets/licencas/`). Ícones no estilo [Lucide](https://lucide.dev) (ISC),
+  redesenhados como caminhos vetoriais.
 - [OBDLogger (NaleenB/obd-profile-logger)](https://github.com/NaleenB/obd-profile-logger), MIT: as notas de
   protocolo sobre ELM327 BLE e o serviço 21 da Mitsubishi guiaram o desenho deste projeto. Nenhum código copiado.
 - [kotlin-obd-api](https://github.com/eltonvs/kotlin-obd-api) e [AndrOBD](https://github.com/fr3ts0n/AndrOBD)
