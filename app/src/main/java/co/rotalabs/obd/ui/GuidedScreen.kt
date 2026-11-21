@@ -90,14 +90,14 @@ fun GuidedScreen(vm: ObdViewModel, shareZip: () -> Unit) {
                         )
                         else -> PrimaryButton(
                             "Começar", { vm.runGuidedStep(step) }, icon = RlIcons.play,
-                            enabled = conn is ConnState.Connected && busy == null,
+                            enabled = conn is ConnState.Connected && canReplace(busy),
                         )
                     }
                     if (running == null && step.id in done) GhostButton("Desmarcar", { vm.setGuidedDone(step.id, false) })
                     Spacer(Modifier.weight(1f))
                     if (running == null && step.action !is Action.Manual && conn !is ConnState.Connected) {
                         Text("Conecte ao adaptador primeiro", style = MaterialTheme.typography.bodyMedium, color = Rl.warning)
-                    } else if (running == null && busy != null) {
+                    } else if (running == null && !canReplace(busy)) {
                         Text("Aguarde: $busy", style = MaterialTheme.typography.bodyMedium, color = Rl.text3, maxLines = 1, overflow = TextOverflow.Ellipsis)
                     }
                 }
@@ -111,6 +111,10 @@ fun GuidedScreen(vm: ObdViewModel, shareZip: () -> Unit) {
         )
     }
 }
+
+/** O passo pode tomar o lugar do Ao vivo e do Explorar 21; espera a Descoberta e a identificação do carro. */
+private fun canReplace(busy: String?): Boolean =
+    busy == null || busy == "Ao vivo" || busy.startsWith("Explorar 21")
 
 @Composable
 private fun StepList(modifier: Modifier, done: Set<String>, selectedId: String, enabled: Boolean, onSelect: (String) -> Unit) {

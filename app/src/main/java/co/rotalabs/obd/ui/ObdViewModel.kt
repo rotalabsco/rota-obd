@@ -671,6 +671,8 @@ class ObdViewModel(app: Application) : AndroidViewModel(app) {
             setGuidedDone(step.id, true)
             return
         }
+        // O Ao vivo não volta sozinho por cima de um passo (ex.: motor liga entre o 1º e o 2º passo).
+        resumeLive = false
         exclusive("$LABEL_GUIDED · ${step.title}") { e ->
             val rec = recorder
             val started = System.currentTimeMillis()

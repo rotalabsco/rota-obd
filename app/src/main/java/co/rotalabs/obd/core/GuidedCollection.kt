@@ -90,7 +90,7 @@ object GuidedCollection {
         ),
         Step(
             "cambio-alavanca-a", GROUP_BEFORE, "Câmbio: P, R, N, D (1ª parte)",
-            "Carro parado, pé firme no freio o tempo todo. Siga as trocas que aparecem na tela (1 minuto).",
+            "Carro parado, freio de mão puxado e pé firme no freio o tempo todo; ninguém na frente nem atrás do carro. Siga as trocas que aparecem na tela (1 minuto).",
             Action.Watch(listOf(lid(T, 0x05)), 60, gearCues),
         ),
         Step(
@@ -110,7 +110,7 @@ object GuidedCollection {
         ),
         Step(
             "viagem", GROUP_TRIP, "Gravar a viagem",
-            "Toque em Começar antes de sair e dirija normalmente. Ninguém precisa mexer na central. " +
+            "Toque em Começar antes de sair, deixe o Rota.OBD aberto na tela e dirija normalmente. Ninguém precisa mexer na central. " +
                 "Para sozinho quando o motor fica desligado por 2 minutos; depois de uma parada, toque em Começar de novo.",
             Action.Watch(
                 listOf(lid(T, 0x05), lid(T, 0x08), lid(E, 0x01), lid(E, 0x02), RPM, SPEED, COOLANT, LOAD),
