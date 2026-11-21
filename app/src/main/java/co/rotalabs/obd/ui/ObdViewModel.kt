@@ -224,7 +224,17 @@ class ObdViewModel(app: Application) : AndroidViewModel(app) {
                 val apk = downloaded?.takeIf { it.exists() && it.name.contains("-${release.build}.") }
                     ?: updater.download(release) { p -> _update.value = UpdateState.Downloading(release, p) }.also { downloaded = it }
                 _update.value = UpdateState.Installing(release)
-                InstallResultReceiver.listener = { msg -> _update.value = UpdateState.Failed("Instalação recusada: $msg", release) }
+                InstallResultReceiver.listener = { msg ->
+                    log("Instalação recusada: $msg")
+                    _update.value = UpdateState.Failed(
+                        if ("UPDATE_INCOMPATIBLE" in msg) {
+                            "A versão instalada tem outra assinatura. Desinstale o Rota.OBD uma vez e instale de novo; depois disso as atualizações seguem por aqui."
+                        } else {
+                            "Instalação recusada: $msg"
+                        },
+                        release,
+                    )
+                }
                 log("Instalando build ${release.build}")
                 updater.install(apk)
             } catch (t: Throwable) {
