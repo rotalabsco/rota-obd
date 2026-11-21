@@ -13,6 +13,7 @@ import co.rotalabs.obd.android.ClassicLink
 import co.rotalabs.obd.android.DeviceScanner
 import co.rotalabs.obd.android.FoundDevice
 import co.rotalabs.obd.android.InstallResultReceiver
+import co.rotalabs.obd.android.ObdService
 import co.rotalabs.obd.android.Updater
 import co.rotalabs.obd.core.UpdateCheck
 import co.rotalabs.obd.core.AdapterInfo
@@ -47,6 +48,8 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import java.io.File
@@ -176,7 +179,27 @@ class ObdViewModel(app: Application) : AndroidViewModel(app) {
     val deadlines: StateFlow<List<Deadline>> = _deadlines
 
     init {
+        keepRunningInBackground()
         autoConnectOnStart()
+    }
+
+    /**
+     * Serviço em primeiro plano enquanto há adaptador conectado ou o app aguarda o carro: assim a leitura
+     * e a gravação continuam com o Maps ou outro app na tela.
+     */
+    private fun keepRunningInBackground() {
+        val app = getApplication<Application>()
+        viewModelScope.launch {
+            combine(_conn, _busy) { c, b ->
+                when (c) {
+                    is ConnState.Connected -> "Conectado a ${c.name}" + (b?.let { " · $it" } ?: "")
+                    is ConnState.Connecting -> if (c.name.contains("aguardando")) "Aguardando o carro ligar" else "Conectando ao adaptador"
+                    else -> null
+                }
+            }.distinctUntilChanged().collect { text ->
+                if (text == null) ObdService.hide(app) else ObdService.show(app, text)
+            }
+        }
     }
 
     // ---------- Atualização ----------
@@ -831,6 +854,7 @@ class ObdViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     override fun onCleared() {
+        ObdService.hide(getApplication())
         scanner.stop()
         stopReconnect()
         watchdog?.cancel()

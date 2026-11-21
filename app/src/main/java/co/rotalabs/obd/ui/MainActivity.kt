@@ -144,6 +144,11 @@ private fun App(vm: ObdViewModel, shareText: (String) -> Unit, shareZip: () -> U
         wasConnected = now
     }
     RefuelDialog(vm)
+    // Android 13+: sem esta permissão a notificação da leitura em segundo plano fica escondida.
+    val notifyLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { }
+    LaunchedEffect(Unit) {
+        if (Build.VERSION.SDK_INT >= 33) notifyLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+    }
     Row(Modifier.fillMaxSize()) {
         NavRail(vm, tab) { tab = it }
         Column(Modifier.weight(1f).fillMaxHeight().padding(horizontal = 20.dp, vertical = 16.dp)) {
@@ -259,6 +264,9 @@ private fun NavRail(vm: ObdViewModel, current: Tab, onSelect: (Tab) -> Unit) {
                 Text(text, style = RlType.mono, fontSize = 13.sp, color = Rl.text, maxLines = 1)
             }
         }
+        // Versão sempre à vista: compare com a "Versão de teste #N" do GitHub para saber se está atualizado.
+        Spacer(Modifier.height(6.dp))
+        Text("v${vm.installedVersion}", style = RlType.mono, fontSize = 12.sp, color = Rl.text3, maxLines = 1)
     }
 }
 
