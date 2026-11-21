@@ -101,6 +101,11 @@ class MainActivity : ComponentActivity() {
         }
     }
 
+    override fun onResume() {
+        super.onResume()
+        vm.onResume()
+    }
+
     private fun shareText(text: String) {
         val send = Intent(Intent.ACTION_SEND).setType("text/plain").putExtra(Intent.EXTRA_TEXT, text)
         startActivity(Intent.createChooser(send, "Compartilhar relatório"))
@@ -141,6 +146,7 @@ private fun App(vm: ObdViewModel, shareText: (String) -> Unit, shareZip: () -> U
     Row(Modifier.fillMaxSize()) {
         NavRail(vm, tab) { tab = it }
         Column(Modifier.weight(1f).fillMaxHeight().padding(horizontal = 20.dp, vertical = 16.dp)) {
+            UpdateStrip(vm)
             BusyStrip(vm, tab)
             when (tab) {
                 Tab.CONNECT -> ConnectScreen(vm)
@@ -152,6 +158,33 @@ private fun App(vm: ObdViewModel, shareText: (String) -> Unit, shareZip: () -> U
                 Tab.LOG -> LogScreen(vm)
             }
         }
+    }
+}
+
+/** Aviso de versão nova e andamento do download e da instalação. Some quando não há nada a fazer. */
+@Composable
+private fun UpdateStrip(vm: ObdViewModel) {
+    val state by vm.update.collectAsState()
+    val (text, action) = when (val s = state) {
+        is UpdateState.Available -> "Nova versão de teste: build ${s.release.build}" to ("Atualizar" to vm::installUpdate)
+        is UpdateState.Downloading -> ("Baixando a versão ${s.release.build}" + (s.progress?.let { " · ${(it * 100).toInt()}%" } ?: "…")) to null
+        is UpdateState.NeedsPermission -> "Libere \"Instalar apps desconhecidos\" para o Rota.OBD e volte aqui" to ("Tentar de novo" to vm::installUpdate)
+        is UpdateState.Installing -> "Confirme a instalação na janela do Android" to null
+        is UpdateState.Failed -> s.message to (if (s.release != null) "Tentar de novo" to vm::installUpdate else null)
+        else -> return
+    }
+    Row(
+        Modifier.fillMaxWidth().padding(bottom = 12.dp)
+            .background(Rl.raised, RoundedCornerShape(Rl.radiusMd))
+            .border(1.dp, if (state is UpdateState.Failed) Rl.danger else Rl.accent, RoundedCornerShape(Rl.radiusMd))
+            .padding(start = 16.dp, end = 4.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(10.dp),
+    ) {
+        Dot(if (state is UpdateState.Failed) Rl.danger else Rl.accent, 8.dp)
+        Text(text, Modifier.weight(1f).padding(vertical = 12.dp), style = MaterialTheme.typography.bodyMedium, color = Rl.text)
+        action?.let { (label, onClick) -> SecondaryButton(label, onClick) }
+        if (state is UpdateState.Available || state is UpdateState.Failed) GhostButton("Depois", vm::dismissUpdate)
     }
 }
 
@@ -643,6 +676,19 @@ private fun ConnectScreen(vm: ObdViewModel) {
                 )
                 PrimaryButton("Procurar adaptadores", { launcher.launch(permissions) }, Modifier.fillMaxWidth(), icon = RlIcons.radar)
                 SecondaryButton("Modo demonstração", { vm.connect(null) }, Modifier.fillMaxWidth())
+                val update by vm.update.collectAsState()
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text(
+                        "Versão ${vm.installedVersion}" + when (val u = update) {
+                            is UpdateState.UpToDate -> " · atualizada"
+                            is UpdateState.Checking -> " · procurando…"
+                            is UpdateState.Available -> " · nova: build ${u.release.build}"
+                            else -> ""
+                        },
+                        Modifier.weight(1f), style = RlType.mono, fontSize = 13.sp, color = Rl.text3,
+                    )
+                    GhostButton("Procurar atualização", { vm.checkUpdate(manual = true) }, enabled = update !is UpdateState.Checking)
+                }
             }
         }
     }

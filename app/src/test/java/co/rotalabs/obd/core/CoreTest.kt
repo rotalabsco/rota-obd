@@ -94,6 +94,23 @@ class CoreTest {
     }
 
     @Test
+    fun readsTestRelease() {
+        // Formato real de GET /repos/rotalabsco/rota-obd/releases/tags/latest (campos usados).
+        val json = """{"name":"Versão de teste #7","published_at":"2026-11-21T15:10:00Z","assets":[
+            {"name":"outro.txt","size":10,"browser_download_url":"https://github.com/x/outro.txt"},
+            {"name":"rota-obd-debug.apk","size":9529060,"browser_download_url":"https://github.com/rotalabsco/rota-obd/releases/download/latest/rota-obd-debug.apk"}]}"""
+        val r = UpdateCheck.parse(json)!!
+        assertEquals(7, r.build)
+        assertEquals(9529060L, r.sizeBytes)
+        assertTrue(r.apkUrl.endsWith("/rota-obd-debug.apk"))
+        assertTrue(UpdateCheck.isNewer(r, 3))
+        assertFalse(UpdateCheck.isNewer(r, 7))
+        assertNull("sem número de build", UpdateCheck.parse("""{"name":"Versão de teste","assets":[]}"""))
+        assertNull("sem APK", UpdateCheck.parse("""{"name":"Versão de teste #8","assets":[]}"""))
+        assertNull("só https", UpdateCheck.parse(json.replace("https://github.com/rotalabsco", "http://github.com/rotalabsco")))
+    }
+
+    @Test
     fun jsonEscapes() {
         assertEquals("{\"a\":\"x\\\"y\",\"b\":1.5,\"c\":null}", Json.obj(mapOf("a" to "x\"y", "b" to 1.5, "c" to null)))
     }
