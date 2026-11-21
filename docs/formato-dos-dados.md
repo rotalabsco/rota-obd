@@ -20,7 +20,11 @@ Uma linha JSON por observação. Campos comuns:
 
 Tipos (`kind`): `session`, `adapter`, `probe`, `modules`, `supported`, `pid` (com `name`, `unit`,
 `value`), `vehicle_info`, `dtc`, `dtc_decoded` (com `codes`), `lid_sweep`, `lid_sweep_aborted`,
-`lid_watch`, `clear_dtc`, `raw`.
+`lid_watch`, `clear_dtc`, `raw`, `coleta`.
+
+`coleta` marca o início e o fim de cada passo da Coleta guiada: `event` (`inicio` ou `fim`), `step` (id do
+passo, em `core/GuidedCollection.kt`), `title` no início e `status` no fim (`concluído`, `interrompido` ou
+`gravado`, este para a gravação da viagem, que não tem duração).
 
 Regra: falha de leitura nunca vira zero. Se não houve resposta, a linha diz isso no `status`.
 
@@ -32,7 +36,8 @@ Exemplo:
 
 ## Relatórios: `sessoes/relatorio_<timestamp>.md`
 
-Texto gerado pela Descoberta, o mesmo de "Compartilhar relatório".
+Texto gerado pela Descoberta, o mesmo de "Compartilhar relatório". Quando a Descoberta é um passo da Coleta guiada, o nome
+leva o id do passo: `relatorio_<timestamp>_<passo>.md`.
 
 ## Garagem: `garagem.json`
 
@@ -70,3 +75,17 @@ abastecimentos depois do primeiro até o segundo (inclusive os parciais).
 `garagem.json` e `vencimentos.json` são gravados num arquivo temporário e renomeados. Se um arquivo
 estiver corrompido ao abrir, ele é copiado para `*.corrompido-<timestamp>` e o app recomeça vazio, sem
 perder o original.
+
+## Exportação (.zip)
+
+Organizada por categoria (`core/ExportLayout.kt`):
+
+| Pasta | Conteúdo |
+|---|---|
+| `coleta/NN-passo/` | as linhas de cada passo da Coleta guiada, recortadas das sessões pelos marcadores `coleta`, e o relatório quando o passo é uma Descoberta |
+| `descobertas/` | relatórios de Descobertas feitas fora da Coleta guiada |
+| `sessoes-completas/` | as sessões inteiras, sem recorte |
+| `garagem/` | `garagem.json` e `vencimentos.json` |
+| `LEIA-ME.txt` | o que tem em cada pasta e a lista dos passos gravados, com o status |
+
+Nada é apagado automaticamente: os arquivos ficam na central até o app ser desinstalado.

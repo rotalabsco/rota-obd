@@ -3,10 +3,12 @@
 Objetivo: descobrir o significado dos bytes do serviço 21 que destravam o consumo real, a temperatura do
 câmbio e o alerta de superaquecimento. Na mesma ida, medir a densidade da tela da central.
 
-Este roteiro usa só o que já existe no app: **Descoberta** e **Explorar 21**. Nenhuma das duas lê PIDs
-padrão ao mesmo tempo que o Explorar 21. Por isso o significado de cada byte vem de duas fontes: a
-comparação entre relatórios da Descoberta tirados em situações diferentes, e o horário das ações durante
-o Explorar 21.
+**No app, use a aba Coleta.** Ela traz este roteiro passo a passo: diz o que fazer em português, mostra
+cada troca com contagem regressiva, roda a leitura sozinha e marca no arquivo o começo e o fim de cada
+passo, sem precisar anotar horário. Este documento explica o porquê de cada passo.
+
+O significado de cada byte vem de duas fontes: a comparação entre relatórios da Descoberta tirados em
+situações diferentes, e o momento das ações durante as leituras repetidas.
 
 ## O que já se sabe (do primeiro teste, 21/11/2026)
 

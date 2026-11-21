@@ -125,6 +125,7 @@ private enum class Tab(val label: String, val icon: ImageVector) {
     LIVE("Ao vivo", RlIcons.gauge),
     DTC("Falhas", RlIcons.alert),
     GARAGE("Garagem", RlIcons.car),
+    GUIDED("Coleta", RlIcons.check),
     DISCOVERY("Descoberta", RlIcons.radar),
     LID("Explorar 21", RlIcons.binary),
     LOG("Registro", RlIcons.log),
@@ -151,6 +152,7 @@ private fun App(vm: ObdViewModel, shareText: (String) -> Unit, shareZip: () -> U
             when (tab) {
                 Tab.CONNECT -> ConnectScreen(vm)
                 Tab.GARAGE -> GarageScreen(vm)
+                Tab.GUIDED -> GuidedScreen(vm, shareZip)
                 Tab.DISCOVERY -> DiscoveryScreen(vm, shareText, shareZip)
                 Tab.LIVE -> LiveScreen(vm) { tab = Tab.CONNECT }
                 Tab.DTC -> DtcScreen(vm)
@@ -194,7 +196,7 @@ private fun BusyStrip(vm: ObdViewModel, tab: Tab) {
     val busy by vm.busy.collectAsState()
     val b = busy ?: return
     val owned = (tab == Tab.LIVE && b == "Ao vivo") || (tab == Tab.DISCOVERY && b == "Descoberta") ||
-        (tab == Tab.LID && b.startsWith("Explorar 21"))
+        (tab == Tab.LID && b.startsWith("Explorar 21")) || (tab == Tab.GUIDED && b.startsWith(ObdViewModel.LABEL_GUIDED))
     if (owned) return
     Row(
         Modifier.fillMaxWidth().padding(bottom = 12.dp)
