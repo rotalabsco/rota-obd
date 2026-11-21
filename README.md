@@ -45,6 +45,10 @@ Capturas do emulador em 1280×720 com o modo demonstração. Valores simulados.
 4. Ignição ligada → **Conexão → Procurar adaptadores** → toque no seu adaptador.
 5. **Descoberta → Iniciar descoberta**. Ao final, **Exportar sessões (.zip)** e **Compartilhar relatório**.
 
+Depois da primeira instalação, o app avisa ao abrir quando há uma versão de teste nova (ou em
+**Conexão → Procurar atualização**): toque em **Atualizar** e confirme na janela do Android. Na primeira
+vez, o Android pede para liberar "instalar apps desconhecidos" para o Rota.OBD.
+
 ## Roteiro
 
 1. **Descoberta** (v0.1): mapear o que a Pajero 4M41 expõe no motor e no câmbio.

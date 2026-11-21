@@ -12,6 +12,9 @@ import co.rotalabs.obd.android.BleLink
 import co.rotalabs.obd.android.ClassicLink
 import co.rotalabs.obd.android.DeviceScanner
 import co.rotalabs.obd.android.FoundDevice
+import co.rotalabs.obd.android.InstallResultReceiver
+import co.rotalabs.obd.android.Updater
+import co.rotalabs.obd.core.UpdateCheck
 import co.rotalabs.obd.core.AdapterInfo
 import co.rotalabs.obd.core.ByteLink
 import co.rotalabs.obd.core.Deadline
@@ -73,6 +76,19 @@ data class LidWatch(
 )
 
 /** O tanque subiu desde a última leitura: provável abastecimento. */
+/** Andamento da atualização pelo próprio app. */
+sealed class UpdateState {
+    object Idle : UpdateState()
+    object Checking : UpdateState()
+    data class UpToDate(val build: Long) : UpdateState()
+    data class Available(val release: UpdateCheck.Release) : UpdateState()
+    data class Downloading(val release: UpdateCheck.Release, val progress: Float?) : UpdateState()
+    /** Falta liberar "instalar apps desconhecidos" para o Rota.OBD. */
+    data class NeedsPermission(val release: UpdateCheck.Release) : UpdateState()
+    data class Installing(val release: UpdateCheck.Release) : UpdateState()
+    data class Failed(val message: String, val release: UpdateCheck.Release?) : UpdateState()
+}
+
 /** Códigos lidos logo antes de uma limpeza (modo 04) e se o módulo confirmou. */
 data class ClearedCodes(val module: Module, val codes: List<String>, val atMillis: Long, val ok: Boolean, val readFailed: Boolean)
 
@@ -152,6 +168,91 @@ class ObdViewModel(app: Application) : AndroidViewModel(app) {
 
     init {
         autoConnectOnStart()
+    }
+
+    // ---------- Atualização ----------
+
+    private val updater = Updater(app)
+    private val _update = MutableStateFlow<UpdateState>(UpdateState.Idle)
+    val update: StateFlow<UpdateState> = _update
+    val installedVersion: String get() = updater.installedName
+    private var downloaded: File? = null
+
+    init {
+        // Depois das declarações acima: o Kotlin inicializa na ordem do arquivo.
+        checkUpdate(manual = false)
+    }
+
+    /**
+     * Procura a versão de teste no GitHub. Na abertura do app ([manual] falso) falha em silêncio:
+     * a central costuma estar sem internet no carro.
+     */
+    fun checkUpdate(manual: Boolean) {
+        val s = _update.value
+        if (s is UpdateState.Checking || s is UpdateState.Downloading || s is UpdateState.Installing) return
+        _update.value = UpdateState.Checking
+        viewModelScope.launch {
+            _update.value = try {
+                val release = updater.fetchLatest()
+                when {
+                    release == null -> if (manual) UpdateState.Failed("A versão de teste não tem APK publicado", null) else UpdateState.Idle
+                    UpdateCheck.isNewer(release, updater.installedBuild) -> UpdateState.Available(release).also {
+                        log("Atualização disponível: build ${release.build} (instalado ${updater.installedBuild})")
+                    }
+                    else -> UpdateState.UpToDate(updater.installedBuild)
+                }
+            } catch (t: Throwable) {
+                if (manual) UpdateState.Failed("Sem acesso ao GitHub: ${t.message ?: t.javaClass.simpleName}", null) else UpdateState.Idle
+            }
+        }
+    }
+
+    fun installUpdate() {
+        val release = when (val s = _update.value) {
+            is UpdateState.Available -> s.release
+            is UpdateState.NeedsPermission -> s.release
+            is UpdateState.Failed -> s.release ?: return
+            else -> return
+        }
+        if (!updater.canInstall()) {
+            _update.value = UpdateState.NeedsPermission(release)
+            updater.openInstallPermission()
+            return
+        }
+        viewModelScope.launch {
+            try {
+                val apk = downloaded?.takeIf { it.exists() && it.name.contains("-${release.build}.") }
+                    ?: updater.download(release) { p -> _update.value = UpdateState.Downloading(release, p) }.also { downloaded = it }
+                _update.value = UpdateState.Installing(release)
+                InstallResultReceiver.listener = { msg ->
+                    log("Instalação recusada: $msg")
+                    _update.value = UpdateState.Failed(
+                        if ("UPDATE_INCOMPATIBLE" in msg) {
+                            "A versão instalada tem outra assinatura. Desinstale o Rota.OBD uma vez e instale de novo; depois disso as atualizações seguem por aqui."
+                        } else {
+                            "Instalação recusada: $msg"
+                        },
+                        release,
+                    )
+                }
+                log("Instalando build ${release.build}")
+                updater.install(apk)
+            } catch (t: Throwable) {
+                _update.value = UpdateState.Failed("Não deu para baixar: ${t.message ?: t.javaClass.simpleName}", release)
+            }
+        }
+    }
+
+    /** Ao voltar das configurações, segue a instalação se a permissão foi dada. */
+    fun onResume() {
+        val s = _update.value
+        if (s is UpdateState.NeedsPermission && updater.canInstall()) installUpdate()
+        // Voltou do instalador sem instalar (cancelou): oferece de novo.
+        if (s is UpdateState.Installing) _update.value = UpdateState.Available(s.release)
+    }
+
+    fun dismissUpdate() {
+        _update.value = UpdateState.Idle
     }
 
     private fun log(line: String) {
