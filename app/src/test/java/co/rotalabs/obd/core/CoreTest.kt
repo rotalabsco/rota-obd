@@ -2,6 +2,8 @@ package co.rotalabs.obd.core
 
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -48,6 +50,31 @@ class CoreTest {
     }
 
     @Test
+    fun describesDtcs() {
+        // Código real da Pajero 4M41, apagado no primeiro teste no carro.
+        val p2426 = DtcCatalog.describe("P2426")
+        assertEquals("Circuito de controle da válvula de arrefecimento da EGR com sinal baixo", p2426.title)
+        assertEquals("Motor e câmbio", p2426.system)
+        assertFalse(p2426.manufacturer)
+        assertTrue(DtcCatalog.describe("p0401").title!!.contains("EGR"))
+        // Código do fabricante: sem descrição inventada, só a estrutura.
+        val p1 = DtcCatalog.describe("P1A23")
+        assertNull(p1.title)
+        assertTrue(p1.manufacturer)
+        assertTrue(p1.summary().contains("fabricante"))
+        // Genérico fora da tabela: informa o grupo pela norma.
+        val unknown = DtcCatalog.describe("P0499")
+        assertNull(unknown.title)
+        assertFalse(unknown.manufacturer)
+        assertTrue(unknown.summary().contains("emissões"))
+        assertEquals("Rede de comunicação", DtcCatalog.describe("U0100").system)
+        assertTrue(DtcCatalog.describe("U1100").manufacturer)
+        assertNull(DtcCatalog.describe("XYZ").title)
+        assertEquals("sistema híbrido", DtcCatalog.describe("P0A80").group)
+        assertNull("P2Axx não é do grupo híbrido", DtcCatalog.describe("P2A00").group)
+    }
+
+    @Test
     fun discoveryAgainstSimulator() = runBlocking {
         val elm = Elm327(ElmExchanger(SimulatedLink(latencyMs = 0)))
         val info = elm.initialize()
@@ -63,6 +90,7 @@ class CoreTest {
         assertEquals(listOf(0x01, 0x30), trans.lids.filter { it.result is ObdResult.Ok }.map { it.lid })
         val text = Discovery.textReport(info, reports)
         assertTrue(text.contains("2101"))
+        assertTrue(text.contains("P0401 Fluxo da EGR insuficiente"))
     }
 
     @Test

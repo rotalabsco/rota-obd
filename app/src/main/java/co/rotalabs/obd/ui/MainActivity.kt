@@ -74,8 +74,10 @@ import androidx.compose.ui.unit.sp
 import androidx.core.content.FileProvider
 import co.rotalabs.obd.R
 import co.rotalabs.obd.core.Discovery
+import co.rotalabs.obd.core.DtcCatalog
 import co.rotalabs.obd.core.Formato
 import co.rotalabs.obd.core.LiveMetrics
+import co.rotalabs.obd.core.LiveSelection
 import co.rotalabs.obd.core.Module
 import co.rotalabs.obd.core.Modules
 import co.rotalabs.obd.core.SleepPolicy
@@ -281,11 +283,16 @@ private fun LiveScreen(vm: ObdViewModel, goConnect: () -> Unit) {
     val busy by vm.busy.collectAsState()
     val conn by vm.conn.collectAsState()
     val garage by vm.garage.collectAsState()
+    val available by vm.liveAvailable.collectAsState()
+    val selection by vm.liveSelection.collectAsState()
+    var picking by remember { mutableStateOf(false) }
     val running = busy == "Ao vivo"
     val connected = conn is ConnState.Connected
+    if (picking) LivePicker(available, selection, vm::setLiveSelected) { picking = false }
     Column(Modifier.fillMaxSize(), verticalArrangement = Arrangement.spacedBy(14.dp)) {
         ScreenHeader("Ao vivo · motor 7E0", garage.vehicle.name) {
             if (connected) Badge(if (running) "Gravando sessão" else "Conectado")
+            SecondaryButton("Escolher dados", { picking = true }, icon = RlIcons.check)
             if (running) {
                 SecondaryButton("Parar", vm::stop, icon = RlIcons.stop)
             } else {
@@ -301,7 +308,7 @@ private fun LiveScreen(vm: ObdViewModel, goConnect: () -> Unit) {
             } else {
                 EmptyState(
                     "Pronto para ler",
-                    "Toque em Começar leitura. O app lê só os PIDs que o motor diz suportar e grava tudo na sessão.",
+                    "Toque em Começar leitura. O app lê os dados marcados em Escolher dados (de início, tudo o que o motor suporta) e grava as leituras na sessão.",
                 )
             }
             return
@@ -309,11 +316,8 @@ private fun LiveScreen(vm: ObdViewModel, goConnect: () -> Unit) {
         val byPid = values.associateBy { it.pid }
         val speed = byPid[LiveMetrics.PID_SPEED]
         val rate = byPid[LiveMetrics.PID_FUEL_RATE]
-        val heroPids = buildList {
-            if (speed != null) add(LiveMetrics.PID_SPEED)
-            if (byPid.containsKey(LiveMetrics.PID_RPM)) add(LiveMetrics.PID_RPM)
-            if (rate == null && byPid.containsKey(LiveMetrics.PID_COOLANT)) add(LiveMetrics.PID_COOLANT)
-        }
+        // Os primeiros da seleção ficam grandes; com a vazão (5E) marcada, o consumo ocupa o terceiro lugar.
+        val heroPids = values.map { it.pid }.filter { it != LiveMetrics.PID_FUEL_RATE }.take(if (rate != null) 2 else 3)
         Row(Modifier.fillMaxWidth().weight(0.46f), horizontalArrangement = Arrangement.spacedBy(14.dp)) {
             heroPids.forEach { pid -> LiveTile(byPid.getValue(pid), Modifier.weight(1f).fillMaxHeight(), hero = true) }
             if (rate != null) ConsumptionTile(speed, rate, Modifier.weight(1f).fillMaxHeight())
@@ -338,7 +342,7 @@ private fun LiveTile(v: LiveValue, modifier: Modifier, hero: Boolean = false) {
         v.value == null -> v.status?.let { if (it.startsWith("não")) "Resposta $it" else "Sem resposta · $it" } ?: "Aguardando leitura"
         level == LiveMetrics.Level.DANGER && limit != null -> "Acima de ${Formato.leitura(limit.second, v.unit)} ${v.unit}"
         level == LiveMetrics.Level.WARNING && limit != null -> "Acima de ${Formato.leitura(limit.first, v.unit)} ${v.unit}"
-        else -> "PID %02X".format(v.pid)
+        else -> LiveSelection.derived[v.pid]?.note ?: "PID %02X".format(v.pid)
     }
     MetricTile(
         label = v.name,
@@ -348,6 +352,51 @@ private fun LiveTile(v: LiveValue, modifier: Modifier, hero: Boolean = false) {
         caption = caption,
         tone = level.tone(),
         maxNumber = if (hero) 112.sp else 44.sp,
+    )
+}
+
+/** Lista para marcar o que aparece no Ao vivo. Vale na hora, mesmo com a leitura rodando. */
+@Composable
+private fun LivePicker(available: List<Int>, selection: List<Int>, onToggle: (Int, Boolean) -> Unit, onClose: () -> Unit) {
+    AlertDialog(
+        onDismissRequest = onClose,
+        containerColor = Rl.raised,
+        title = { Text("Dados do Ao vivo", style = MaterialTheme.typography.headlineSmall) },
+        text = {
+            Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                if (available.isEmpty()) {
+                    Text(
+                        "O app ainda não sabe o que este carro oferece. Conecte e toque em Começar leitura (ou rode a Descoberta) e volte aqui.",
+                        style = MaterialTheme.typography.bodyMedium, color = Rl.text2,
+                    )
+                } else {
+                    Text(
+                        "Os três primeiros marcados ficam grandes. Só os marcados são lidos e gravados na sessão: menos itens, atualização mais rápida.",
+                        style = MaterialTheme.typography.bodyMedium, color = Rl.text2,
+                    )
+                    available.forEach { id ->
+                        val checked = id in selection
+                        Row(
+                            Modifier.fillMaxWidth().defaultMinSize(minHeight = Rl.touch)
+                                .clickable(role = Role.Checkbox) { onToggle(id, !checked) },
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            Checkbox(
+                                checked, null,
+                                colors = CheckboxDefaults.colors(checkedColor = Rl.orange, checkmarkColor = Rl.onAccent, uncheckedColor = Rl.lineStrong),
+                            )
+                            Spacer(Modifier.width(12.dp))
+                            Text(LiveSelection.name(id), Modifier.weight(1f), style = MaterialTheme.typography.bodyLarge, color = Rl.text)
+                            Text(
+                                LiveSelection.derived[id]?.note ?: "PID %02X".format(id),
+                                style = RlType.mono, color = Rl.text3,
+                            )
+                        }
+                    }
+                }
+            }
+        },
+        confirmButton = { SecondaryButton("Pronto", onClose) },
     )
 }
 
@@ -384,6 +433,7 @@ private fun modeLabel(mode: String) = when (mode) {
 @Composable
 private fun DtcScreen(vm: ObdViewModel) {
     val dtcs by vm.dtcs.collectAsState()
+    val lastCleared by vm.lastCleared.collectAsState()
     val busy by vm.busy.collectAsState()
     val conn by vm.conn.collectAsState()
     var mode by remember { mutableStateOf("03") }
@@ -432,14 +482,29 @@ private fun DtcScreen(vm: ObdViewModel) {
                                 Dot(Rl.success, 8.dp)
                                 Text("Nenhum código ${modeLabel(mode).dropLast(1).lowercase()}", style = MaterialTheme.typography.bodyMedium, color = Rl.text2)
                             }
-                            else -> codes.forEach { code ->
-                                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(16.dp)) {
-                                    Text(code, style = RlType.metric, fontSize = 28.sp, color = Rl.danger, modifier = Modifier.width(120.dp))
-                                    Spacer(Modifier.weight(1f))
-                                    Badge(modeLabel(mode).dropLast(1), tone = Tone.DANGER)
-                                }
-                            }
+                            else -> codes.forEach { code -> DtcRow(code, modeLabel(mode).dropLast(1)) }
                         }
+                    }
+                }
+            }
+            lastCleared?.let { c ->
+                RlCard(Modifier.fillMaxWidth()) {
+                    Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                        val time = java.text.SimpleDateFormat("HH:mm", java.util.Locale.ROOT).format(java.util.Date(c.atMillis))
+                        Text(
+                            when {
+                                !c.ok -> "Limpeza do ${c.module.name.lowercase()} às $time não confirmada pelo módulo"
+                                c.codes.isEmpty() && c.readFailed -> "Limpeza do ${c.module.name.lowercase()} às $time · o módulo não respondeu à leitura anterior"
+                                c.codes.isEmpty() -> "Limpeza do ${c.module.name.lowercase()} às $time · não havia códigos"
+                                else -> "Apagados do ${c.module.name.lowercase()} às $time"
+                            },
+                            style = MaterialTheme.typography.titleMedium, color = Rl.text,
+                        )
+                        c.codes.forEach { DtcRow(it, "Apagado", tone = Tone.MISSING) }
+                        if (c.codes.isNotEmpty()) Text(
+                            "Se a causa continuar, o código volta depois de alguns ciclos de uso. Leia de novo após rodar.",
+                            style = MaterialTheme.typography.bodySmall, color = Rl.text3,
+                        )
                     }
                 }
             }
@@ -455,7 +520,28 @@ private fun DtcScreen(vm: ObdViewModel) {
             containerColor = Rl.raised,
             title = { Text("Apagar os códigos do ${m.name.lowercase()}?", style = MaterialTheme.typography.headlineSmall) },
             text = {
-                Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                    val reads = list.orEmpty().filter { it.module == m && (it.mode == "03" || it.mode == "07") }
+                    val pending = reads.flatMap { it.codes.orEmpty() }.distinct()
+                    when {
+                        list == null -> Text(
+                            "Os códigos ainda não foram lidos. O app lê e guarda a lista antes de apagar.",
+                            style = MaterialTheme.typography.bodyMedium, color = Rl.text,
+                        )
+                        pending.isEmpty() && reads.any { it.codes == null } -> Text(
+                            "O ${m.name.lowercase()} não respondeu à última leitura: não dá para saber o que será apagado. " +
+                                "O app tenta ler de novo e guarda a lista antes de apagar.",
+                            style = MaterialTheme.typography.bodyMedium, color = Rl.text,
+                        )
+                        pending.isEmpty() -> Text(
+                            "Não há códigos armazenados nem pendentes no ${m.name.lowercase()}.",
+                            style = MaterialTheme.typography.bodyMedium, color = Rl.text,
+                        )
+                        else -> {
+                            Text("Serão apagados:", style = MaterialTheme.typography.titleMedium, color = Rl.text)
+                            pending.forEach { DtcRow(it, null, compact = true) }
+                        }
+                    }
                     Text(
                         "Faça com o motor desligado e a ignição ligada. Isso também zera os monitores de prontidão " +
                             "e os dados de congelamento. Se a causa continuar, a luz volta. Leia e anote os códigos antes.",
@@ -470,6 +556,30 @@ private fun DtcScreen(vm: ObdViewModel) {
             confirmButton = { DangerButton("Apagar do ${m.name.lowercase()}", { vm.clearDtcs(m); confirm = null }, filled = true) },
             dismissButton = { SecondaryButton("Cancelar", { confirm = null }) },
         )
+    }
+}
+
+/** Um código com a descrição em português; quebra linha em telas estreitas. */
+@Composable
+private fun DtcRow(code: String, badge: String?, tone: Tone = Tone.DANGER, compact: Boolean = false) {
+    val info = DtcCatalog.describe(code)
+    Row(verticalAlignment = Alignment.Top, horizontalArrangement = Arrangement.spacedBy(16.dp)) {
+        Text(
+            info.code, style = RlType.metric, fontSize = if (compact) 20.sp else 28.sp,
+            color = if (tone == Tone.DANGER) Rl.danger else Rl.text2,
+            modifier = Modifier.width(if (compact) 80.dp else 120.dp),
+        )
+        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+            Text(
+                info.title ?: if (info.manufacturer) "Código do fabricante sem descrição no app" else "Código sem descrição no app",
+                style = MaterialTheme.typography.bodyLarge, color = if (info.title != null) Rl.text else Rl.text2,
+            )
+            Text(
+                info.origin() + if (info.title == null) info.group?.let { " · grupo: $it" }.orEmpty() else "",
+                style = MaterialTheme.typography.bodySmall, color = Rl.text3,
+            )
+        }
+        if (badge != null) Badge(badge, tone = tone)
     }
 }
 

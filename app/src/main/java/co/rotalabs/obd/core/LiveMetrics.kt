@@ -15,6 +15,7 @@ object Formato {
         "rpm", "km/h", "km", "s", "Nm", "kPa", "%", "" -> 0
         "°C" -> if (kotlin.math.abs(v) >= 100) 0 else 1
         "V", "L/h", "g/s", "km/L" -> 1
+        "bar" -> 2
         else -> if (kotlin.math.abs(v) >= 100) 0 else 1
     }
 

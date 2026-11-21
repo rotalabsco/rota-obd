@@ -29,6 +29,21 @@ Depois de transferir o repositório para outra conta, nada precisa mudar: o work
 próprio repositório. Confira em Settings → Actions → General se o Actions está habilitado e se a
 permissão de workflow está em "Read and write".
 
+### Chave de assinatura
+
+O Android só instala uma versão nova por cima da antiga se as duas tiverem a mesma assinatura. Uma
+máquina nova do GitHub Actions cria uma chave de depuração nova a cada build, então o workflow lê a
+chave do segredo `DEBUG_KEYSTORE_B64` (o `debug.keystore` em base64). Para configurar:
+
+```bash
+base64 -w0 ~/.android/debug.keystore | gh secret set DEBUG_KEYSTORE_B64 -R rotalabsco/rota-obd
+```
+
+Trocar a chave obriga a desinstalar o app uma vez, o que apaga a Garagem. Usar o `debug.keystore` da
+máquina de desenvolvimento deixa a assinatura igual à do build local, mas o Android também recusa
+`versionCode` menor: um APK local (versionCode 1) só instala por cima de um do CI com
+`GITHUB_RUN_NUMBER` maior definido no build, ou depois de desinstalar.
+
 ## Instalar na central
 
 1. Baixar `rota-obd-debug.apk` em Releases.

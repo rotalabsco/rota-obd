@@ -103,7 +103,7 @@ class Discovery(
                     val text = when {
                         d.codes == null -> "sem resposta (${describe(d.result)})"
                         d.codes.isEmpty() -> "nenhum"
-                        else -> d.codes.joinToString(", ")
+                        else -> d.codes.joinToString("; ") { "$it ${DtcCatalog.describe(it).summary()}" }
                     }
                     appendLine("- Códigos $label: $text")
                 }
