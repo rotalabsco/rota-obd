@@ -211,6 +211,9 @@ class ObdViewModel(app: Application) : AndroidViewModel(app) {
         autoConnectOnStart()
     }
 
+    /** PIDs que o painel flutuante precisa, se ele estiver ligado. */
+    private fun panelPids(): List<Int> = if (_panelEnabled.value) PanelItems.pidsToRead(_panelItems.value) else emptyList()
+
     fun setAppVisible(visible: Boolean) {
         _appVisible.value = visible
         if (visible) _overlayAllowed.value = Settings.canDrawOverlays(getApplication())
@@ -222,7 +225,7 @@ class ObdViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     fun togglePanelItem(id: Int) {
-        val next = PanelItems.toggle(_panelItems.value, id)
+        val next = PanelItems.toggle(_panelItems.value, id, PanelItems.options(_liveAvailable.value).map { it.id })
         _panelItems.value = next
         prefs.edit().putString(KEY_PANEL_ITEMS, PanelItems.encode(next)).apply()
     }
@@ -679,7 +682,8 @@ class ObdViewModel(app: Application) : AndroidViewModel(app) {
         while (kotlin.coroutines.coroutineContext.isActive) {
             val selected = _liveSelection.value
             // O nível do tanque é lido mesmo desmarcado: alimenta a detecção de abastecimento.
-            val reads = LiveSelection.pidsToRead(selected) + (if (FUEL_LEVEL_PID in supported) listOf(FUEL_LEVEL_PID) else emptyList())
+            val reads = LiveSelection.pidsToRead(selected) + panelPids().filter { it in supported } +
+                (if (FUEL_LEVEL_PID in supported) listOf(FUEL_LEVEL_PID) else emptyList())
             publish(selected)
             for (p in reads.distinct()) {
                 if (p in slow && round % 10 != 0 && raw.containsKey(p)) continue
@@ -815,7 +819,14 @@ class ObdViewModel(app: Application) : AndroidViewModel(app) {
         var samples = 0
         while (kotlin.coroutines.coroutineContext.isActive) {
             if (a.durationSec != null && System.currentTimeMillis() - start >= a.durationSec * 1000L) break
-            for (r in a.reads) {
+            // Na viagem, o que está marcado no painel flutuante também é lido, para ele não mostrar "—".
+            val extra = if (a.durationSec != null) emptyList() else {
+                val have = a.reads.filter { it.service == 0x01 && it.module == Modules.ENGINE }.map { it.id }.toSet()
+                val supported = engineSupported
+                panelPids().filter { it !in have && (supported == null || it in supported) }
+                    .map { GuidedCollection.Read(Modules.ENGINE, 0x01, it) }
+            }
+            for (r in a.reads + extra) {
                 if (r.service == 0x01) e.readPid(r.module, r.id) else e.request(r.module, r.hex, 1000, kind = "lid_watch")
                 samples++
             }

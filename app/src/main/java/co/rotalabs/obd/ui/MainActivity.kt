@@ -729,6 +729,7 @@ private fun PanelCard(vm: ObdViewModel) {
     val enabled by vm.panelEnabled.collectAsState()
     val allowed by vm.overlayAllowed.collectAsState()
     val items by vm.panelItems.collectAsState()
+    val available by vm.liveAvailable.collectAsState()
     val context = LocalContext.current
     RlCard(Modifier.fillMaxWidth()) {
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(14.dp)) {
@@ -760,9 +761,14 @@ private fun PanelCard(vm: ObdViewModel) {
         }
         Spacer(Modifier.height(14.dp))
         Overline("Mostrar no painel · até ${PanelItems.MAX}")
+        Text(
+            if (available.isEmpty()) "A lista completa (a mesma do Ao vivo) aparece depois da primeira leitura do Ao vivo neste carro."
+            else "Os mesmos dados do Ao vivo, mais a bateria.",
+            style = MaterialTheme.typography.bodySmall, color = Rl.text3,
+        )
         Spacer(Modifier.height(8.dp))
         FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            PanelItems.options.forEach { o ->
+            PanelItems.options(available).forEach { o ->
                 val on = o.id in items
                 Box(
                     Modifier.defaultMinSize(minHeight = 48.dp)
