@@ -10,6 +10,7 @@ Tudo o que serviu de base para o projeto e o que é preciso saber para continuar
 | [modo-de-espera.md](modo-de-espera.md) | Como o app convive com o modo de espera do adaptador sem drenar a bateria |
 | [formato-dos-dados.md](formato-dos-dados.md) | Arquivos gravados: sessões NDJSON, `garagem.json`, `vencimentos.json` |
 | [veiculo-pajero-4m41.md](veiculo-pajero-4m41.md) | O que já se sabe do carro de referência e o plano de testes |
+| [roteiro-servico-21.md](roteiro-servico-21.md) | Roteiro do segundo teste no carro: serviço 21, temperaturas do câmbio e densidade da central |
 | [decisoes.md](decisoes.md) | Decisões de projeto e por que foram tomadas |
 | [build-e-ci.md](build-e-ci.md) | Como compilar, rodar os testes e gerar o APK automaticamente |
 | [visual.md](visual.md) | Visual do app: RotaLabs DS, tokens, fontes e regras para uso no carro |

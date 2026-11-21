@@ -25,7 +25,7 @@ Registro curto das escolhas feitas e do motivo, para quem continuar o projeto.
 
 ## Próximos passos combinados
 
-1. Primeiro teste no carro (Descoberta) e ajuste do que aparecer.
+1. Primeiro teste no carro (Descoberta): feito em 21/11/2026. Segundo teste, para o serviço 21: [roteiro-servico-21.md](roteiro-servico-21.md).
 2. Temperatura do câmbio e do motor com alerta, e viagens automáticas com consumo real.
 3. Painel flutuante com controle de música.
 4. Sincronização com o Home Assistant.
