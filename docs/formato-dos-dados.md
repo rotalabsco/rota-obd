@@ -22,6 +22,11 @@ Tipos (`kind`): `session`, `adapter`, `probe`, `modules`, `supported`, `pid` (co
 `value`), `vehicle_info`, `dtc`, `dtc_decoded` (com `codes`), `lid_sweep`, `lid_sweep_aborted`,
 `lid_watch`, `clear_dtc`, `raw`, `coleta`.
 
+`session` (a primeira linha de cada arquivo) e o início de cada passo da `coleta` trazem a versão: `app_version`,
+`app_build` (o número da Versão de teste), `android` (nível da API) e `aparelho`. Os relatórios e o
+`LEIA-ME.txt` da exportação também dizem a versão. Assim dá para saber se um problema já foi corrigido numa
+versão mais nova.
+
 `coleta` marca o início e o fim de cada passo da Coleta guiada: `event` (`inicio` ou `fim`), `step` (id do
 passo, em `core/GuidedCollection.kt`), `title` no início e `status` no fim (`concluído`, `interrompido` ou
 `gravado`, este para a gravação da viagem, que não tem duração).

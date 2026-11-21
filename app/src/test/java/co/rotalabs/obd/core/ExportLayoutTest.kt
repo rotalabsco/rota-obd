@@ -59,5 +59,6 @@ class ExportLayoutTest {
         val text = ExportLayout.readme(listOf(ExportLayout.marker(end("d1-ignicao"))!!))
         assertTrue(text.contains("coleta/01-d1-ignicao: Ignição ligada, motor desligado (concluído)"))
         assertTrue(ExportLayout.readme(emptyList()).contains("Nenhum passo"))
+        assertTrue(ExportLayout.readme(emptyList(), "versão 0.1.12 (build 12)").contains("app versão 0.1.12 (build 12)"))
     }
 }

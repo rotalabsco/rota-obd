@@ -63,8 +63,9 @@ object ExportLayout {
     }
 
     /** Texto do LEIA-ME, com os passos encontrados nos marcadores. */
-    fun readme(markers: List<Marker>): String = buildString {
+    fun readme(markers: List<Marker>, appVersion: String? = null): String = buildString {
         appendLine("Rota.OBD: dados exportados")
+        appVersion?.let { appendLine("Exportado pelo app $it. Cada sessão e cada passo gravam a versão que estava instalada.") }
         appendLine()
         appendLine("coleta/              uma pasta por passo da Coleta guiada, com as leituras do passo")
         appendLine("                     (recortadas das sessões) e o relatório, se o passo é uma Descoberta")

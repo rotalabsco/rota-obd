@@ -185,6 +185,16 @@ class ObdViewModel(app: Application) : AndroidViewModel(app) {
     private val _update = MutableStateFlow<UpdateState>(UpdateState.Idle)
     val update: StateFlow<UpdateState> = _update
     val installedVersion: String get() = updater.installedName
+
+    /** Versão do app e do aparelho, gravada em toda sessão, relatório e exportação: o que mudou pode ser só a versão. */
+    private fun versionFields(): Map<String, Any?> = mapOf(
+        "app_version" to updater.installedName,
+        "app_build" to updater.installedBuild,
+        "android" to Build.VERSION.SDK_INT,
+        "aparelho" to "${Build.MANUFACTURER} ${Build.MODEL}",
+    )
+
+    private fun versionLabel(): String = "versão ${updater.installedName} (build ${updater.installedBuild})"
     private var downloaded: File? = null
 
     init {
@@ -305,7 +315,7 @@ class ObdViewModel(app: Application) : AndroidViewModel(app) {
             val stamp = SimpleDateFormat("yyyy-MM-dd_HH-mm-ss", Locale.ROOT).format(Date())
             val rec = NdjsonRecorder(File(sessionsDir, "sessao_$stamp.ndjson"))
             recorder = rec
-            rec.record("session", mapOf("device" to name, "link" to detail, "app" to "rota-obd"))
+            rec.record("session", mapOf("device" to name, "link" to detail, "app" to "rota-obd") + versionFields())
             val e = Elm327(ElmExchanger(l), rec, ::log)
             elm = e
             val info = e.initialize()
@@ -511,7 +521,7 @@ class ObdViewModel(app: Application) : AndroidViewModel(app) {
         _lidsFound.value = reports.associate { r ->
             r.module to r.lids.filter { it.result is ObdResult.Ok }.map { it.lid }
         }.filterValues { it.isNotEmpty() }
-        val text = Discovery.textReport(adapterInfo, reports)
+        val text = Discovery.textReport(adapterInfo, reports, versionLabel())
         File(sessionsDir, reportName).writeText(text)
         _report.value = text
         _step.value = null
@@ -666,7 +676,7 @@ class ObdViewModel(app: Application) : AndroidViewModel(app) {
             val started = System.currentTimeMillis()
             _guidedRun.value = GuidedRun(step.id, started)
             runCatching {
-                rec?.record(ExportLayout.MARKER_KIND, mapOf("event" to ExportLayout.EVENT_START, "step" to step.id, "title" to step.title))
+                rec?.record(ExportLayout.MARKER_KIND, mapOf("event" to ExportLayout.EVENT_START, "step" to step.id, "title" to step.title) + versionFields())
             }
             log("Coleta guiada: ${step.title}")
             var status = "interrompido"
@@ -800,7 +810,7 @@ class ObdViewModel(app: Application) : AndroidViewModel(app) {
                     put("${ExportLayout.stepFolder(step)}/${f.name}", lines.joinToString("\n", postfix = "\n").toByteArray())
                 }
             }
-            put("LEIA-ME.txt", ExportLayout.readme(markers).toByteArray())
+            put("LEIA-ME.txt", ExportLayout.readme(markers, versionLabel()).toByteArray())
         }
         return out
     }

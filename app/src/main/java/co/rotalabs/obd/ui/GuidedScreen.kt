@@ -155,7 +155,7 @@ private fun RunningPanel(vm: ObdViewModel, step: GuidedCollection.Step, run: Gui
         is Action.Watch -> {
             val cue = GuidedCollection.cueAt(a.cues, elapsed)
             Text(
-                cue?.text ?: "", style = RlType.title, fontSize = 34.sp, lineHeight = 40.sp, color = Rl.accent,
+                cue?.text ?: "", style = RlType.title, fontSize = 30.sp, lineHeight = 36.sp, color = Rl.accent,
             )
             val dur = a.durationSec
             if (dur != null) {
@@ -165,14 +165,17 @@ private fun RunningPanel(vm: ObdViewModel, step: GuidedCollection.Step, run: Gui
                     modifier = Modifier.fillMaxWidth().height(10.dp),
                     color = Rl.orange, trackColor = Rl.hover, drawStopIndicator = {},
                 )
-                Text("Faltam $left s", style = RlType.metric, fontSize = 22.sp, color = Rl.text)
+                Row(verticalAlignment = Alignment.Bottom, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                    Text("Faltam $left s", style = RlType.metric, fontSize = 22.sp, color = Rl.text)
+                    Text("${run.samples} leituras", style = MaterialTheme.typography.bodySmall, color = Rl.text3, modifier = Modifier.padding(bottom = 3.dp))
+                }
                 GuidedCollection.nextCue(a.cues, elapsed)?.let {
                     Text("Depois: ${it.text} (em ${it.atSec - elapsed} s)", style = MaterialTheme.typography.bodyLarge, color = Rl.text2)
                 }
             } else {
                 Text("Gravando há %d:%02d".format(elapsed / 60, elapsed % 60), style = RlType.metric, fontSize = 22.sp, color = Rl.text)
+                Text("${run.samples} leituras", style = MaterialTheme.typography.bodySmall, color = Rl.text3)
             }
-            Text("${run.samples} leituras", style = MaterialTheme.typography.bodySmall, color = Rl.text3)
         }
         Action.Discovery -> {
             val progress by vm.progress.collectAsState()
