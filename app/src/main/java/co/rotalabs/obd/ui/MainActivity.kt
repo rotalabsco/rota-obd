@@ -125,6 +125,7 @@ private enum class Tab(val label: String, val icon: ImageVector) {
     LIVE("Ao vivo", RlIcons.gauge),
     DTC("Falhas", RlIcons.alert),
     GARAGE("Garagem", RlIcons.car),
+    GUIDED("Coleta", RlIcons.check),
     DISCOVERY("Descoberta", RlIcons.radar),
     LID("Explorar 21", RlIcons.binary),
     LOG("Registro", RlIcons.log),
@@ -143,6 +144,11 @@ private fun App(vm: ObdViewModel, shareText: (String) -> Unit, shareZip: () -> U
         wasConnected = now
     }
     RefuelDialog(vm)
+    // Android 13+: sem esta permissão a notificação da leitura em segundo plano fica escondida.
+    val notifyLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { }
+    LaunchedEffect(Unit) {
+        if (Build.VERSION.SDK_INT >= 33) notifyLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+    }
     Row(Modifier.fillMaxSize()) {
         NavRail(vm, tab) { tab = it }
         Column(Modifier.weight(1f).fillMaxHeight().padding(horizontal = 20.dp, vertical = 16.dp)) {
@@ -151,6 +157,7 @@ private fun App(vm: ObdViewModel, shareText: (String) -> Unit, shareZip: () -> U
             when (tab) {
                 Tab.CONNECT -> ConnectScreen(vm)
                 Tab.GARAGE -> GarageScreen(vm)
+                Tab.GUIDED -> GuidedScreen(vm, shareZip)
                 Tab.DISCOVERY -> DiscoveryScreen(vm, shareText, shareZip)
                 Tab.LIVE -> LiveScreen(vm) { tab = Tab.CONNECT }
                 Tab.DTC -> DtcScreen(vm)
@@ -194,7 +201,7 @@ private fun BusyStrip(vm: ObdViewModel, tab: Tab) {
     val busy by vm.busy.collectAsState()
     val b = busy ?: return
     val owned = (tab == Tab.LIVE && b == "Ao vivo") || (tab == Tab.DISCOVERY && b == "Descoberta") ||
-        (tab == Tab.LID && b.startsWith("Explorar 21"))
+        (tab == Tab.LID && b.startsWith("Explorar 21")) || (tab == Tab.GUIDED && b.startsWith(ObdViewModel.LABEL_GUIDED))
     if (owned) return
     Row(
         Modifier.fillMaxWidth().padding(bottom = 12.dp)
@@ -257,6 +264,9 @@ private fun NavRail(vm: ObdViewModel, current: Tab, onSelect: (Tab) -> Unit) {
                 Text(text, style = RlType.mono, fontSize = 13.sp, color = Rl.text, maxLines = 1)
             }
         }
+        // Versão sempre à vista: compare com a "Versão de teste #N" do GitHub para saber se está atualizado.
+        Spacer(Modifier.height(6.dp))
+        Text("v${vm.installedVersion}", style = RlType.mono, fontSize = 12.sp, color = Rl.text3, maxLines = 1)
     }
 }
 

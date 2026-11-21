@@ -16,6 +16,19 @@ android {
         versionName = "0.1.${System.getenv("GITHUB_RUN_NUMBER") ?: "0"}"
     }
 
+    signingConfigs {
+        getByName("debug") {
+            // No CI, a chave fixa vem do segredo DEBUG_KEYSTORE_B64 (docs/build-e-ci.md). Precisa ser explícita:
+            // o AGP não pegava ~/.android/debug.keystore no runner, e cada build saía com uma chave nova.
+            System.getenv("DEBUG_KEYSTORE_PATH")?.let { file(it) }?.takeIf { it.exists() }?.let {
+                storeFile = it
+                storePassword = "android"
+                keyAlias = "androiddebugkey"
+                keyPassword = "android"
+            }
+        }
+    }
+
     buildTypes {
         release {
             isMinifyEnabled = false

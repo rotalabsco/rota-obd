@@ -81,8 +81,9 @@ class Discovery(
 
     companion object {
         /** Relatório em texto para colar numa conversa, issue ou fórum. */
-        fun textReport(adapter: AdapterInfo?, reports: List<ModuleReport>): String = buildString {
+        fun textReport(adapter: AdapterInfo?, reports: List<ModuleReport>, appVersion: String? = null): String = buildString {
             appendLine("# Rota.OBD — relatório de descoberta")
+            appVersion?.let { appendLine("App: $it") }
             adapter?.let {
                 appendLine("Adaptador: ${it.version} | tensão ${it.voltage} | protocolo ${it.protocol}")
             }

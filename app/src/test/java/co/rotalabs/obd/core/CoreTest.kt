@@ -88,7 +88,8 @@ class CoreTest {
         assertEquals(listOf(0x01, 0x02, 0x03, 0x10, 0x11), ok)
         val trans = reports.first { it.module == Modules.TRANSMISSION }
         assertEquals(listOf(0x01, 0x30), trans.lids.filter { it.result is ObdResult.Ok }.map { it.lid })
-        val text = Discovery.textReport(info, reports)
+        val text = Discovery.textReport(info, reports, "versão 0.1.12 (build 12)")
+        assertTrue(text.contains("App: versão 0.1.12 (build 12)"))
         assertTrue(text.contains("2101"))
         assertTrue(text.contains("P0401 Fluxo da EGR insuficiente"))
     }

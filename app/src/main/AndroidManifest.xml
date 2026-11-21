@@ -18,6 +18,10 @@
     <!-- Atualização pelo próprio app: consulta a versão de teste no GitHub e pede a instalação -->
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
+    <!-- Leitura em segundo plano (Maps na tela): serviço em primeiro plano com notificação fixa -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_CONNECTED_DEVICE" />
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
 
     <application
         android:allowBackup="true"
@@ -34,6 +38,11 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
+
+        <service
+            android:name=".android.ObdService"
+            android:exported="false"
+            android:foregroundServiceType="connectedDevice" />
 
         <receiver
             android:name=".android.InstallResultReceiver"

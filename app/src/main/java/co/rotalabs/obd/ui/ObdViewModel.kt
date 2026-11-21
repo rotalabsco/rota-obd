@@ -13,6 +13,7 @@ import co.rotalabs.obd.android.ClassicLink
 import co.rotalabs.obd.android.DeviceScanner
 import co.rotalabs.obd.android.FoundDevice
 import co.rotalabs.obd.android.InstallResultReceiver
+import co.rotalabs.obd.android.ObdService
 import co.rotalabs.obd.android.Updater
 import co.rotalabs.obd.core.UpdateCheck
 import co.rotalabs.obd.core.AdapterInfo
@@ -25,6 +26,8 @@ import co.rotalabs.obd.core.DtcCatalog
 import co.rotalabs.obd.core.LiveSelection
 import co.rotalabs.obd.core.Elm327
 import co.rotalabs.obd.core.ElmExchanger
+import co.rotalabs.obd.core.ExportLayout
+import co.rotalabs.obd.core.GuidedCollection
 import co.rotalabs.obd.core.FuelEntry
 import co.rotalabs.obd.core.Garage
 import co.rotalabs.obd.core.GarageData
@@ -45,6 +48,8 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import java.io.File
@@ -91,6 +96,9 @@ sealed class UpdateState {
 
 /** Códigos lidos logo antes de uma limpeza (modo 04) e se o módulo confirmou. */
 data class ClearedCodes(val module: Module, val codes: List<String>, val atMillis: Long, val ok: Boolean, val readFailed: Boolean)
+
+/** Passo da Coleta guiada em andamento. */
+data class GuidedRun(val stepId: String, val startedAt: Long, val samples: Int = 0)
 
 data class RefuelPrompt(val fromPct: Double, val toPct: Double, val suggestedLiters: Double?)
 
@@ -146,6 +154,10 @@ class ObdViewModel(app: Application) : AndroidViewModel(app) {
     private var currentName = ""
     private var currentDetail = ""
     private val prefs = app.getSharedPreferences("rota-obd", Context.MODE_PRIVATE)
+    private val _guidedDone = MutableStateFlow(prefs.getStringSet(KEY_GUIDED_DONE, null)?.toSet() ?: emptySet())
+    val guidedDone: StateFlow<Set<String>> = _guidedDone
+    private val _guidedRun = MutableStateFlow<GuidedRun?>(null)
+    val guidedRun: StateFlow<GuidedRun?> = _guidedRun
 
     /** O que este carro permite mostrar no Ao vivo (guardado da última leitura) e o que está marcado. */
     private val _liveAvailable = MutableStateFlow(LiveSelection.decode(prefs.getString(KEY_LIVE_AVAILABLE, null))?.let { LiveSelection.order(it) } ?: emptyList())
@@ -167,7 +179,27 @@ class ObdViewModel(app: Application) : AndroidViewModel(app) {
     val deadlines: StateFlow<List<Deadline>> = _deadlines
 
     init {
+        keepRunningInBackground()
         autoConnectOnStart()
+    }
+
+    /**
+     * Serviço em primeiro plano enquanto há adaptador conectado ou o app aguarda o carro: assim a leitura
+     * e a gravação continuam com o Maps ou outro app na tela.
+     */
+    private fun keepRunningInBackground() {
+        val app = getApplication<Application>()
+        viewModelScope.launch {
+            combine(_conn, _busy) { c, b ->
+                when (c) {
+                    is ConnState.Connected -> "Conectado a ${c.name}" + (b?.let { " · $it" } ?: "")
+                    is ConnState.Connecting -> if (c.name.contains("aguardando")) "Aguardando o carro ligar" else "Conectando ao adaptador"
+                    else -> null
+                }
+            }.distinctUntilChanged().collect { text ->
+                if (text == null) ObdService.hide(app) else ObdService.show(app, text)
+            }
+        }
     }
 
     // ---------- Atualização ----------
@@ -176,6 +208,16 @@ class ObdViewModel(app: Application) : AndroidViewModel(app) {
     private val _update = MutableStateFlow<UpdateState>(UpdateState.Idle)
     val update: StateFlow<UpdateState> = _update
     val installedVersion: String get() = updater.installedName
+
+    /** Versão do app e do aparelho, gravada em toda sessão, relatório e exportação: o que mudou pode ser só a versão. */
+    private fun versionFields(): Map<String, Any?> = mapOf(
+        "app_version" to updater.installedName,
+        "app_build" to updater.installedBuild,
+        "android" to Build.VERSION.SDK_INT,
+        "aparelho" to "${Build.MANUFACTURER} ${Build.MODEL}",
+    )
+
+    private fun versionLabel(): String = "versão ${updater.installedName} (build ${updater.installedBuild})"
     private var downloaded: File? = null
 
     init {
@@ -296,7 +338,7 @@ class ObdViewModel(app: Application) : AndroidViewModel(app) {
             val stamp = SimpleDateFormat("yyyy-MM-dd_HH-mm-ss", Locale.ROOT).format(Date())
             val rec = NdjsonRecorder(File(sessionsDir, "sessao_$stamp.ndjson"))
             recorder = rec
-            rec.record("session", mapOf("device" to name, "link" to detail, "app" to "rota-obd"))
+            rec.record("session", mapOf("device" to name, "link" to detail, "app" to "rota-obd") + versionFields())
             val e = Elm327(ElmExchanger(l), rec, ::log)
             elm = e
             val info = e.initialize()
@@ -416,7 +458,7 @@ class ObdViewModel(app: Application) : AndroidViewModel(app) {
                         quiet = true
                         log("Motor desligado (%.1f V): leituras pausadas para não manter o carro acordado".format(Locale.ROOT, volts ?: 0.0))
                         _conn.value = ConnState.Connected(currentName, "$currentDetail · motor desligado, leituras pausadas")
-                        if (jobLabel == LABEL_LIVE || jobLabel?.startsWith(LABEL_LID) == true) {
+                        if (jobLabel == LABEL_LIVE || jobLabel?.startsWith(LABEL_LID) == true || guidedWatchRunning()) {
                             resumeLive = jobLabel == LABEL_LIVE
                             job?.cancel()
                         }
@@ -486,6 +528,10 @@ class ObdViewModel(app: Application) : AndroidViewModel(app) {
     // ---------- Leituras ----------
 
     fun runDiscovery(sweep21: Boolean) = exclusive("Descoberta") { e ->
+        discover(e, sweep21, "relatorio_${System.currentTimeMillis()}.md")
+    }
+
+    private suspend fun discover(e: Elm327, sweep21: Boolean, reportName: String) {
         _report.value = null
         _progress.value = 0f
         val reports = Discovery(e, recorder!!) { step, fraction ->
@@ -498,8 +544,8 @@ class ObdViewModel(app: Application) : AndroidViewModel(app) {
         _lidsFound.value = reports.associate { r ->
             r.module to r.lids.filter { it.result is ObdResult.Ok }.map { it.lid }
         }.filterValues { it.isNotEmpty() }
-        val text = Discovery.textReport(adapterInfo, reports)
-        File(sessionsDir, "relatorio_${System.currentTimeMillis()}.md").writeText(text)
+        val text = Discovery.textReport(adapterInfo, reports, versionLabel())
+        File(sessionsDir, reportName).writeText(text)
         _report.value = text
         _step.value = null
     }
@@ -623,6 +669,87 @@ class ObdViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
+    // ---------- Coleta guiada ----------
+
+    private fun guidedWatchRunning(): Boolean =
+        jobLabel?.startsWith(LABEL_GUIDED) == true &&
+            _guidedRun.value?.let { GuidedCollection.step(it.stepId)?.action } is GuidedCollection.Action.Watch
+
+    fun setGuidedDone(stepId: String, done: Boolean) {
+        val next = if (done) _guidedDone.value + stepId else _guidedDone.value - stepId
+        _guidedDone.value = next
+        prefs.edit().putStringSet(KEY_GUIDED_DONE, next).apply()
+    }
+
+    /** Começa uma coleta nova: desmarca os passos. O que já foi gravado continua nas sessões. */
+    fun resetGuided() {
+        _guidedDone.value = emptySet()
+        prefs.edit().remove(KEY_GUIDED_DONE).apply()
+    }
+
+    /** Roda um passo, gravando um marcador `coleta` no início e outro no fim da sessão. */
+    fun runGuidedStep(step: GuidedCollection.Step) {
+        val action = step.action
+        if (action is GuidedCollection.Action.Manual) {
+            setGuidedDone(step.id, true)
+            return
+        }
+        // O Ao vivo não volta sozinho por cima de um passo (ex.: motor liga entre o 1º e o 2º passo).
+        resumeLive = false
+        exclusive("$LABEL_GUIDED · ${step.title}") { e ->
+            val rec = recorder
+            val started = System.currentTimeMillis()
+            _guidedRun.value = GuidedRun(step.id, started)
+            runCatching {
+                rec?.record(ExportLayout.MARKER_KIND, mapOf("event" to ExportLayout.EVENT_START, "step" to step.id, "title" to step.title) + versionFields())
+            }
+            log("Coleta guiada: ${step.title}")
+            var status = "interrompido"
+            try {
+                when (action) {
+                    GuidedCollection.Action.Discovery -> discover(e, true, ExportLayout.guidedReportName(started, step.id))
+                    is GuidedCollection.Action.Watch -> watchReads(e, action)
+                    GuidedCollection.Action.Manual -> Unit
+                }
+                status = "concluído"
+                setGuidedDone(step.id, true)
+            } finally {
+                // A gravação da viagem não tem duração: termina quando para, e vale se gravou ao menos 1 minuto.
+                val openEnded = action is GuidedCollection.Action.Watch && action.durationSec == null
+                if (openEnded && System.currentTimeMillis() - started >= 60_000L) {
+                    status = "gravado"
+                    setGuidedDone(step.id, true)
+                }
+                runCatching {
+                    rec?.record(ExportLayout.MARKER_KIND, mapOf("event" to ExportLayout.EVENT_END, "step" to step.id, "status" to status))
+                }
+                log("Coleta guiada: ${step.title} · $status")
+                _guidedRun.value = null
+            }
+        }
+    }
+
+    /** Lê as leituras do passo em rodízio até o tempo acabar (ou até parar, se não houver tempo). */
+    private suspend fun watchReads(e: Elm327, a: GuidedCollection.Action.Watch) {
+        val start = System.currentTimeMillis()
+        var samples = 0
+        while (kotlin.coroutines.coroutineContext.isActive) {
+            if (a.durationSec != null && System.currentTimeMillis() - start >= a.durationSec * 1000L) break
+            for (r in a.reads) {
+                if (r.service == 0x01) e.readPid(r.module, r.id) else e.request(r.module, r.hex, 1000, kind = "lid_watch")
+                samples++
+            }
+            _guidedRun.value = _guidedRun.value?.copy(samples = samples)
+            delay(50)
+        }
+    }
+
+    /** Quantos arquivos estão gravados e quanto ocupam. Nada é apagado sozinho. */
+    fun storedData(): Pair<Int, Long> {
+        val files = sessionsDir.listFiles().orEmpty().filter { it.isFile }
+        return files.size to files.sumOf { it.length() }
+    }
+
     // ---------- Garagem ----------
 
     private fun updateGarage(change: (GarageData) -> GarageData) {
@@ -684,21 +811,31 @@ class ObdViewModel(app: Application) : AndroidViewModel(app) {
         updateGarage { it.copy(lastFuelLevelPct = level, lastFuelLevelAt = System.currentTimeMillis()) }
     }
 
-    /** Junta as sessões gravadas, a garagem e os vencimentos num .zip para compartilhar. */
+    /** Junta tudo num .zip organizado por categoria (veja [ExportLayout]) para compartilhar. */
     fun exportZip(): File {
         val out = File(getApplication<Application>().cacheDir, "rota-obd-sessoes.zip")
+        val files = sessionsDir.listFiles()?.filter { it.isFile }?.sortedBy { it.name }.orEmpty()
+        val markers = mutableListOf<ExportLayout.Marker>()
         ZipOutputStream(out.outputStream()).use { zip ->
-            for (f in listOf(garageFile, deadlinesFile)) {
+            fun put(name: String, bytes: ByteArray) {
+                zip.putNextEntry(ZipEntry(name))
+                zip.write(bytes)
+                zip.closeEntry()
+            }
+            for (f in listOf(garageFile, deadlinesFile) + files) {
                 if (!f.exists()) continue
-                zip.putNextEntry(ZipEntry(f.name))
+                zip.putNextEntry(ZipEntry(ExportLayout.entryFor(f.name)))
                 f.inputStream().use { it.copyTo(zip) }
                 zip.closeEntry()
             }
-            sessionsDir.listFiles()?.sortedBy { it.name }?.forEach { f ->
-                zip.putNextEntry(ZipEntry(f.name))
-                f.inputStream().use { it.copyTo(zip) }
-                zip.closeEntry()
+            for (f in files.filter { it.name.endsWith(".ndjson") }) {
+                markers += f.useLines { lines -> lines.mapNotNull(ExportLayout::marker).toList() }
+                val parts = f.useLines { ExportLayout.splitByStep(it) }
+                for ((step, lines) in parts) {
+                    put("${ExportLayout.stepFolder(step)}/${f.name}", lines.joinToString("\n", postfix = "\n").toByteArray())
+                }
             }
+            put("LEIA-ME.txt", ExportLayout.readme(markers, versionLabel()).toByteArray())
         }
         return out
     }
@@ -707,6 +844,8 @@ class ObdViewModel(app: Application) : AndroidViewModel(app) {
         const val FUEL_LEVEL_PID = 0x2F
         private const val LABEL_LIVE = "Ao vivo"
         private const val LABEL_LID = "Explorar 21"
+        const val LABEL_GUIDED = "Coleta guiada"
+        private const val KEY_GUIDED_DONE = "coleta_guiada_feitos"
         private const val KEY_ADDRESS = "ultimo_adaptador"
         private const val KEY_BLE = "ultimo_adaptador_ble"
         private const val KEY_NAME = "ultimo_adaptador_nome"
@@ -715,6 +854,7 @@ class ObdViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     override fun onCleared() {
+        ObdService.hide(getApplication())
         scanner.stop()
         stopReconnect()
         watchdog?.cancel()

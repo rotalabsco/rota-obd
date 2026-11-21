@@ -38,7 +38,9 @@ jobs:
           if [ -n "$DEBUG_KEYSTORE_B64" ]; then
             mkdir -p ~/.android
             echo "$DEBUG_KEYSTORE_B64" | base64 -d > ~/.android/debug.keystore
-            echo "Usando a chave de depuração do segredo."
+            echo "DEBUG_KEYSTORE_PATH=$HOME/.android/debug.keystore" >> "$GITHUB_ENV"
+            echo "Usando a chave de depuração do segredo:"
+            keytool -list -v -keystore ~/.android/debug.keystore -storepass android -alias androiddebugkey | grep -E 'SHA256:'
           else
             echo "::warning::Segredo DEBUG_KEYSTORE_B64 ausente: o APK sai com chave nova e não atualiza o instalado."
           fi
@@ -49,7 +51,10 @@ jobs:
           gradle --no-daemon testDebugUnitTest assembleDebug 2>&1 | tee build.log
 
       - name: Preparar APK
-        run: cp app/build/outputs/apk/debug/app-debug.apk rota-obd-debug.apk
+        run: |
+          cp app/build/outputs/apk/debug/app-debug.apk rota-obd-debug.apk
+          # Confere a assinatura: tem de ser a mesma em todo build, senão a atualização pelo app é recusada.
+          "$ANDROID_HOME"/build-tools/35.0.0/apksigner verify --print-certs rota-obd-debug.apk | grep 'SHA-256'
 
       - uses: actions/upload-artifact@v4
         with:
