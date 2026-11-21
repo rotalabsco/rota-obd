@@ -2,6 +2,12 @@ package co.rotalabs.obd.ui
 
 import android.Manifest
 import android.content.Intent
+import co.rotalabs.obd.core.PanelItems
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.material3.SwitchDefaults
+import androidx.compose.material3.Switch
+import android.provider.Settings
+import android.net.Uri
 import android.os.Build
 import android.os.Bundle
 import android.view.WindowManager
@@ -104,6 +110,17 @@ class MainActivity : ComponentActivity() {
     override fun onResume() {
         super.onResume()
         vm.onResume()
+    }
+
+    // O painel flutuante só aparece com o app fora da tela.
+    override fun onStart() {
+        super.onStart()
+        vm.setAppVisible(true)
+    }
+
+    override fun onStop() {
+        vm.setAppVisible(false)
+        super.onStop()
     }
 
     private fun shareText(text: String) {
@@ -653,6 +670,7 @@ private fun ConnectScreen(vm: ObdViewModel) {
         Row(Modifier.weight(1f), horizontalArrangement = Arrangement.spacedBy(14.dp)) {
             Column(Modifier.weight(1.6f).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(14.dp)) {
                 AdapterCard(conn, vm::disconnect)
+                PanelCard(vm)
                 SleepCard(conn, mode, volts)
             }
             Column(Modifier.weight(1f).fillMaxHeight(), verticalArrangement = Arrangement.spacedBy(10.dp)) {
@@ -699,6 +717,67 @@ private fun ConnectScreen(vm: ObdViewModel) {
                     )
                     GhostButton("Procurar atualização", { vm.checkUpdate(manual = true) }, enabled = update !is UpdateState.Checking)
                 }
+            }
+        }
+    }
+}
+
+/** Liga o painel por cima dos apps, pede a permissão e escolhe o que mostrar. */
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun PanelCard(vm: ObdViewModel) {
+    val enabled by vm.panelEnabled.collectAsState()
+    val allowed by vm.overlayAllowed.collectAsState()
+    val items by vm.panelItems.collectAsState()
+    val available by vm.liveAvailable.collectAsState()
+    val context = LocalContext.current
+    RlCard(Modifier.fillMaxWidth()) {
+        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(14.dp)) {
+            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                Text("Painel por cima dos apps", style = MaterialTheme.typography.titleMedium, color = Rl.text)
+                Text(
+                    "Com o Maps ou a música na tela, mostra um quadrinho com os valores escolhidos e se está gravando. " +
+                        "Arraste para mudar de lugar; toque nele para voltar ao Rota.OBD.",
+                    style = MaterialTheme.typography.bodySmall, color = Rl.text3,
+                )
+            }
+            Switch(
+                enabled, vm::setPanelEnabled,
+                colors = SwitchDefaults.colors(checkedTrackColor = Rl.orange, checkedThumbColor = Rl.onAccent, uncheckedTrackColor = Rl.sunken),
+            )
+        }
+        if (enabled && !allowed) {
+            Spacer(Modifier.height(12.dp))
+            Text(
+                "Falta liberar \"Sobrepor a outros apps\" para o Rota.OBD. Toque abaixo, ative e volte aqui.",
+                style = MaterialTheme.typography.bodyMedium, color = Rl.warning,
+            )
+            Spacer(Modifier.height(8.dp))
+            SecondaryButton("Liberar permissão", {
+                val pkg = Uri.parse("package:${context.packageName}")
+                runCatching { context.startActivity(Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION, pkg)) }
+                    .onFailure { context.startActivity(Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, pkg)) }
+            })
+        }
+        Spacer(Modifier.height(14.dp))
+        Overline("Mostrar no painel · até ${PanelItems.MAX}")
+        Text(
+            if (available.isEmpty()) "A lista completa (a mesma do Ao vivo) aparece depois da primeira leitura do Ao vivo neste carro."
+            else "Os mesmos dados do Ao vivo, mais a bateria.",
+            style = MaterialTheme.typography.bodySmall, color = Rl.text3,
+        )
+        Spacer(Modifier.height(8.dp))
+        FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            PanelItems.options(available).forEach { o ->
+                val on = o.id in items
+                Box(
+                    Modifier.defaultMinSize(minHeight = 48.dp)
+                        .background(if (on) Rl.accentSoft else Color.Transparent, RoundedCornerShape(Rl.radiusMd))
+                        .border(1.dp, if (on) Rl.accentLine else Rl.line, RoundedCornerShape(Rl.radiusMd))
+                        .clickable(role = Role.Checkbox) { vm.togglePanelItem(o.id) }
+                        .padding(horizontal = 14.dp),
+                    contentAlignment = Alignment.Center,
+                ) { Text(o.label, style = MaterialTheme.typography.bodyMedium, color = if (on) Rl.accent else Rl.text2) }
             }
         }
     }

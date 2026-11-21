@@ -3,7 +3,9 @@ package co.rotalabs.obd.ui
 import android.Manifest
 import android.app.Application
 import android.content.Context
+import android.content.Intent
 import android.content.pm.PackageManager
+import android.provider.Settings
 import android.os.Build
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.AndroidViewModel
@@ -13,6 +15,7 @@ import co.rotalabs.obd.android.ClassicLink
 import co.rotalabs.obd.android.DeviceScanner
 import co.rotalabs.obd.android.FoundDevice
 import co.rotalabs.obd.android.InstallResultReceiver
+import co.rotalabs.obd.android.FloatingPanel
 import co.rotalabs.obd.android.ObdService
 import co.rotalabs.obd.android.Updater
 import co.rotalabs.obd.core.UpdateCheck
@@ -37,6 +40,8 @@ import co.rotalabs.obd.core.MaintenanceRecord
 import co.rotalabs.obd.core.Module
 import co.rotalabs.obd.core.Modules
 import co.rotalabs.obd.core.NdjsonRecorder
+import co.rotalabs.obd.core.ObservingRecorder
+import co.rotalabs.obd.core.PanelItems
 import co.rotalabs.obd.core.ObdPids
 import co.rotalabs.obd.core.ObdResult
 import co.rotalabs.obd.core.SimulatedLink
@@ -178,9 +183,87 @@ class ObdViewModel(app: Application) : AndroidViewModel(app) {
     private val _deadlines = MutableStateFlow(deadlineStore.load())
     val deadlines: StateFlow<List<Deadline>> = _deadlines
 
+    // ---------- Painel flutuante ----------
+
+    private val _pidReadings = MutableStateFlow<Map<Int, PanelItems.Reading>>(emptyMap())
+    private val _appVisible = MutableStateFlow(true)
+    private val _overlayAllowed = MutableStateFlow(Settings.canDrawOverlays(app))
+    val overlayAllowed: StateFlow<Boolean> = _overlayAllowed
+    private val _panelEnabled = MutableStateFlow(prefs.getBoolean(KEY_PANEL, false))
+    val panelEnabled: StateFlow<Boolean> = _panelEnabled
+    private val _panelItems = MutableStateFlow(PanelItems.decode(prefs.getString(KEY_PANEL_ITEMS, null)) ?: PanelItems.default)
+    val panelItems: StateFlow<List<Int>> = _panelItems
+
+    private val panel = FloatingPanel(
+        app,
+        onMoved = { x, y -> prefs.edit().putInt(KEY_PANEL_X, x).putInt(KEY_PANEL_Y, y).apply() },
+        onTap = {
+            app.startActivity(
+                Intent(app, MainActivity::class.java)
+                    .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_REORDER_TO_FRONT),
+            )
+        },
+    )
+
     init {
         keepRunningInBackground()
+        driveFloatingPanel()
         autoConnectOnStart()
+    }
+
+    /** PIDs que o painel flutuante precisa, se ele estiver ligado. */
+    private fun panelPids(): List<Int> = if (_panelEnabled.value) PanelItems.pidsToRead(_panelItems.value) else emptyList()
+
+    fun setAppVisible(visible: Boolean) {
+        _appVisible.value = visible
+        if (visible) _overlayAllowed.value = Settings.canDrawOverlays(getApplication())
+    }
+
+    fun setPanelEnabled(enabled: Boolean) {
+        _panelEnabled.value = enabled
+        prefs.edit().putBoolean(KEY_PANEL, enabled).apply()
+    }
+
+    fun togglePanelItem(id: Int) {
+        val next = PanelItems.toggle(_panelItems.value, id, PanelItems.options(_liveAvailable.value).map { it.id })
+        _panelItems.value = next
+        prefs.edit().putString(KEY_PANEL_ITEMS, PanelItems.encode(next)).apply()
+    }
+
+    /** Guarda o último valor de cada PID do motor, lido pelo Ao vivo ou pela Coleta guiada. */
+    private fun observeReading(kind: String, fields: Map<String, Any?>) {
+        if (kind != "pid" || fields["mod"] != Modules.ENGINE.id) return
+        val pid = (fields["req"] as? String)?.takeIf { it.length == 4 }?.substring(2)?.toIntOrNull(16) ?: return
+        val value = fields["value"] as? Double ?: return
+        _pidReadings.value = _pidReadings.value + (pid to PanelItems.Reading(value, System.currentTimeMillis()))
+    }
+
+    /** Mostra o painel quando o app sai da tela (Maps por cima) e há conexão; some quando o app volta. */
+    private fun driveFloatingPanel() {
+        data class Live(val conn: ConnState, val busy: String?, val readings: Map<Int, PanelItems.Reading>, val volts: Double?, val visible: Boolean)
+        viewModelScope.launch {
+            combine(
+                combine(_conn, _busy, _pidReadings, _voltage, _appVisible) { c, b, r, v, vis -> Live(c, b, r, v, vis) },
+                _panelEnabled, _panelItems, _overlayAllowed,
+            ) { live, enabled, items, allowed -> Triple(live, enabled && allowed, items) }.collect { (live, on, items) ->
+                val connected = live.conn is ConnState.Connected || live.conn is ConnState.Connecting
+                if (!on || live.visible || !connected) {
+                    panel.hide()
+                    return@collect
+                }
+                if (!panel.visible) panel.show(prefs.getInt(KEY_PANEL_X, 24), prefs.getInt(KEY_PANEL_Y, 120))
+                val recording = live.busy?.startsWith(LABEL_GUIDED) == true
+                val status = when {
+                    live.conn is ConnState.Connecting -> "● Aguardando o carro"
+                    recording -> "● Gravando · " + live.busy!!.removePrefix("$LABEL_GUIDED · ")
+                    live.busy == LABEL_LIVE -> "● Ao vivo"
+                    live.busy != null -> "● ${live.busy}"
+                    else -> "● Conectado · sem leitura"
+                }
+                val readings = if (live.busy == null) emptyMap() else live.readings
+                panel.update(status, recording, PanelItems.lines(items, readings, live.volts, System.currentTimeMillis()))
+            }
+        }
     }
 
     /**
@@ -339,7 +422,7 @@ class ObdViewModel(app: Application) : AndroidViewModel(app) {
             val rec = NdjsonRecorder(File(sessionsDir, "sessao_$stamp.ndjson"))
             recorder = rec
             rec.record("session", mapOf("device" to name, "link" to detail, "app" to "rota-obd") + versionFields())
-            val e = Elm327(ElmExchanger(l), rec, ::log)
+            val e = Elm327(ElmExchanger(l), ObservingRecorder(rec, ::observeReading), ::log)
             elm = e
             val info = e.initialize()
             adapterInfo = info
@@ -599,7 +682,8 @@ class ObdViewModel(app: Application) : AndroidViewModel(app) {
         while (kotlin.coroutines.coroutineContext.isActive) {
             val selected = _liveSelection.value
             // O nível do tanque é lido mesmo desmarcado: alimenta a detecção de abastecimento.
-            val reads = LiveSelection.pidsToRead(selected) + (if (FUEL_LEVEL_PID in supported) listOf(FUEL_LEVEL_PID) else emptyList())
+            val reads = LiveSelection.pidsToRead(selected) + panelPids().filter { it in supported } +
+                (if (FUEL_LEVEL_PID in supported) listOf(FUEL_LEVEL_PID) else emptyList())
             publish(selected)
             for (p in reads.distinct()) {
                 if (p in slow && round % 10 != 0 && raw.containsKey(p)) continue
@@ -735,7 +819,14 @@ class ObdViewModel(app: Application) : AndroidViewModel(app) {
         var samples = 0
         while (kotlin.coroutines.coroutineContext.isActive) {
             if (a.durationSec != null && System.currentTimeMillis() - start >= a.durationSec * 1000L) break
-            for (r in a.reads) {
+            // Na viagem, o que está marcado no painel flutuante também é lido, para ele não mostrar "—".
+            val extra = if (a.durationSec != null) emptyList() else {
+                val have = a.reads.filter { it.service == 0x01 && it.module == Modules.ENGINE }.map { it.id }.toSet()
+                val supported = engineSupported
+                panelPids().filter { it !in have && (supported == null || it in supported) }
+                    .map { GuidedCollection.Read(Modules.ENGINE, 0x01, it) }
+            }
+            for (r in a.reads + extra) {
                 if (r.service == 0x01) e.readPid(r.module, r.id) else e.request(r.module, r.hex, 1000, kind = "lid_watch")
                 samples++
             }
@@ -845,6 +936,10 @@ class ObdViewModel(app: Application) : AndroidViewModel(app) {
         private const val LABEL_LIVE = "Ao vivo"
         private const val LABEL_LID = "Explorar 21"
         const val LABEL_GUIDED = "Coleta guiada"
+        private const val KEY_PANEL = "painel_flutuante"
+        private const val KEY_PANEL_ITEMS = "painel_flutuante_itens"
+        private const val KEY_PANEL_X = "painel_flutuante_x"
+        private const val KEY_PANEL_Y = "painel_flutuante_y"
         private const val KEY_GUIDED_DONE = "coleta_guiada_feitos"
         private const val KEY_ADDRESS = "ultimo_adaptador"
         private const val KEY_BLE = "ultimo_adaptador_ble"
@@ -855,6 +950,7 @@ class ObdViewModel(app: Application) : AndroidViewModel(app) {
 
     override fun onCleared() {
         ObdService.hide(getApplication())
+        panel.hide()
         scanner.stop()
         stopReconnect()
         watchdog?.cancel()
