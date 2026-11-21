@@ -59,7 +59,7 @@ vez, o Android pede para liberar "instalar apps desconhecidos" para o Rota.OBD.
    injetado, calibrado pelos abastecimentos.
 4. **Sincronização**: ao chegar no Wi-Fi de casa, envia resumo para o **Home Assistant** por MQTT
    (sensores criados sozinhos) e as sessões brutas para uma pasta sincronizada.
-5. **Painel flutuante** por cima do Maps e do player.
+5. **Painel flutuante** por cima do Maps e do player: os valores e o status da gravação já aparecem; falta o controle de música.
 
 ## Como ajudar com o seu carro
 

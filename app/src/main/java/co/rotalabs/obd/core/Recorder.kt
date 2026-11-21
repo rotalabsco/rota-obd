@@ -12,6 +12,16 @@ interface Recorder {
     fun close() {}
 }
 
+/** Repassa cada linha para [inner] e avisa [onRecord] (ex.: o painel flutuante pega os últimos valores). */
+class ObservingRecorder(private val inner: Recorder, private val onRecord: (String, Map<String, Any?>) -> Unit) : Recorder {
+    override fun record(kind: String, fields: Map<String, Any?>) {
+        inner.record(kind, fields)
+        runCatching { onRecord(kind, fields) }
+    }
+
+    override fun close() = inner.close()
+}
+
 object NoopRecorder : Recorder {
     override fun record(kind: String, fields: Map<String, Any?>) {}
 }

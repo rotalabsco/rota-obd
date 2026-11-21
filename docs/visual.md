@@ -42,5 +42,5 @@ A temperatura do fluido do câmbio só entra quando o perfil do serviço 21 esti
 
 ## O que ainda não está no app
 
-- Painel flutuante sobre o Maps com controle de música (roteiro, etapa 5).
+- Controle de música no painel flutuante (o painel em si já existe: tela Conexão → "Painel por cima dos apps").
 - Tema claro do DS: os tokens existem no DS, mas o app só usa o escuro por enquanto.
