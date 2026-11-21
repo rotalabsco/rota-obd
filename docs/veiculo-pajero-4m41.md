@@ -26,6 +26,26 @@ O chassi completo não fica no repositório público, só o prefixo.
    - temperatura do fluido do câmbio (para o alerta de superaquecimento);
    - pressão real e alvo do rail, pressão do turbo, temperatura do combustível.
 
+## Primeiro teste no carro (21/11/2026)
+
+Motor ligado, parado, em marcha lenta (~650 rpm), com o adaptador anunciado como `IOS-Vlink` (ELM327 v2.3, BLE).
+
+| Pergunta | Resposta |
+|---|---|
+| PIDs padrão do motor | 26: 01 04 05 0B 0C 0D 0F 10 11 1C 1F 21 23 2C 2D 30 31 33 3C 42 45 49 4A 4C 4D 4E |
+| `2F` nível do tanque | **não suportado**: a detecção de abastecimento pelo nível não funciona neste carro |
+| `5E` vazão de combustível | **não suportado**: o consumo tem de vir do serviço 21 |
+| `5C` temperatura do óleo | não suportado |
+| Turbo | `0B` (MAP) e `33` (barométrica) existem: pressão do turbo = MAP − barométrica |
+| Rail | `23` responde (≈30 MPa em marcha lenta) |
+| Câmbio em `7E1` | responde: `TCM-TransmisCtrl`, calibração `8631A87001`, 12 PIDs padrão |
+| Serviço 21 | motor: 101 LIDs de 256; câmbio: 14 LIDs (`2101`–`210B`, `21E0`, `21E1`, `21E4`) |
+| Códigos | P2426 (EGR, válvula de arrefecimento, sinal baixo) armazenado e pendente no motor, com 38 km rodados de luz acesa; apagado no teste |
+
+Explorar 21 foi usado só no `2101` do motor, por ~60 s parado: 61 respostas diferentes, sem acelerar nem
+ligar o ar. As 22 leituras sem resposta ficaram todas no fim (ignição desligada). Ainda não dá para
+atribuir significado a nenhum byte.
+
 ## Plano de teste no carro
 
 1. Fechar o Car Scanner. Ignição ligada, abrir o app, conectar ao Vgate.

@@ -29,6 +29,20 @@ jobs:
         with:
           gradle-version: 8.11.1
 
+      # Chave de depuração fixa: sem ela cada build gera uma chave nova e o APK não instala por cima
+      # do anterior (o Android exige a mesma assinatura). Fica no segredo DEBUG_KEYSTORE_B64.
+      - name: Chave de assinatura fixa
+        env:
+          DEBUG_KEYSTORE_B64: ${{ secrets.DEBUG_KEYSTORE_B64 }}
+        run: |
+          if [ -n "$DEBUG_KEYSTORE_B64" ]; then
+            mkdir -p ~/.android
+            echo "$DEBUG_KEYSTORE_B64" | base64 -d > ~/.android/debug.keystore
+            echo "Usando a chave de depuração do segredo."
+          else
+            echo "::warning::Segredo DEBUG_KEYSTORE_B64 ausente: o APK sai com chave nova e não atualiza o instalado."
+          fi
+
       - name: Testes e APK
         run: |
           set -o pipefail

@@ -18,6 +18,8 @@ import co.rotalabs.obd.core.Deadline
 import co.rotalabs.obd.core.DeadlineStore
 import co.rotalabs.obd.core.Deadlines
 import co.rotalabs.obd.core.Discovery
+import co.rotalabs.obd.core.DtcCatalog
+import co.rotalabs.obd.core.LiveSelection
 import co.rotalabs.obd.core.Elm327
 import co.rotalabs.obd.core.ElmExchanger
 import co.rotalabs.obd.core.FuelEntry
@@ -71,6 +73,9 @@ data class LidWatch(
 )
 
 /** O tanque subiu desde a última leitura: provável abastecimento. */
+/** Códigos lidos logo antes de uma limpeza (modo 04) e se o módulo confirmou. */
+data class ClearedCodes(val module: Module, val codes: List<String>, val atMillis: Long, val ok: Boolean, val readFailed: Boolean)
+
 data class RefuelPrompt(val fromPct: Double, val toPct: Double, val suggestedLiters: Double?)
 
 class ObdViewModel(app: Application) : AndroidViewModel(app) {
@@ -90,6 +95,9 @@ class ObdViewModel(app: Application) : AndroidViewModel(app) {
     val live: StateFlow<List<LiveValue>> = _live
     private val _dtcs = MutableStateFlow<List<Elm327.DtcRead>?>(null)
     val dtcs: StateFlow<List<Elm327.DtcRead>?> = _dtcs
+    /** Últimos códigos apagados, para a tela continuar mostrando o que era depois da limpeza. */
+    private val _lastCleared = MutableStateFlow<ClearedCodes?>(null)
+    val lastCleared: StateFlow<ClearedCodes?> = _lastCleared
     private val _watch = MutableStateFlow<LidWatch?>(null)
     val watch: StateFlow<LidWatch?> = _watch
     private val _lidsFound = MutableStateFlow<Map<Module, List<Int>>>(emptyMap())
@@ -122,6 +130,12 @@ class ObdViewModel(app: Application) : AndroidViewModel(app) {
     private var currentName = ""
     private var currentDetail = ""
     private val prefs = app.getSharedPreferences("rota-obd", Context.MODE_PRIVATE)
+
+    /** O que este carro permite mostrar no Ao vivo (guardado da última leitura) e o que está marcado. */
+    private val _liveAvailable = MutableStateFlow(LiveSelection.decode(prefs.getString(KEY_LIVE_AVAILABLE, null))?.let { LiveSelection.order(it) } ?: emptyList())
+    val liveAvailable: StateFlow<List<Int>> = _liveAvailable
+    private val _liveSelection = MutableStateFlow(LiveSelection.effective(LiveSelection.decode(prefs.getString(KEY_LIVE_SELECTION, null)), _liveAvailable.value))
+    val liveSelection: StateFlow<List<Int>> = _liveSelection
 
     val sessionsDir: File = File(app.getExternalFilesDir(null) ?: app.filesDir, "sessoes").apply { mkdirs() }
     private val dataDir: File = app.getExternalFilesDir(null) ?: app.filesDir
@@ -379,6 +393,7 @@ class ObdViewModel(app: Application) : AndroidViewModel(app) {
             log(step)
         }.run(sweepService21 = sweep21)
         engineSupported = reports.firstOrNull { it.module == Modules.ENGINE }?.supportedPids
+        engineSupported?.let { setLiveAvailable(it) }
         _lidsFound.value = reports.associate { r ->
             r.module to r.lids.filter { it.result is ObdResult.Ok }.map { it.lid }
         }.filterValues { it.isNotEmpty() }
@@ -388,30 +403,68 @@ class ObdViewModel(app: Application) : AndroidViewModel(app) {
         _step.value = null
     }
 
+    /** Marca ou desmarca um dado do Ao vivo; vale na hora, inclusive com a leitura em andamento. */
+    fun setLiveSelected(id: Int, selected: Boolean) {
+        val current = _liveSelection.value.toMutableSet()
+        if (selected) current.add(id) else current.remove(id)
+        val ordered = LiveSelection.order(current)
+        _liveSelection.value = ordered
+        prefs.edit().putString(KEY_LIVE_SELECTION, LiveSelection.encode(ordered)).apply()
+    }
+
+    private fun setLiveAvailable(supported: List<Int>) {
+        val available = LiveSelection.available(supported)
+        _liveAvailable.value = available
+        prefs.edit().putString(KEY_LIVE_AVAILABLE, LiveSelection.encode(available)).apply()
+        _liveSelection.value = LiveSelection.effective(LiveSelection.decode(prefs.getString(KEY_LIVE_SELECTION, null)), available)
+    }
+
     fun startLive() = exclusive(LABEL_LIVE) { e ->
         val supported = engineSupported ?: e.supportedPids(Modules.ENGINE).also { engineSupported = it }
-        val pids = supported.filter { it in ObdPids.defs }
-        if (pids.isEmpty()) {
+        setLiveAvailable(supported)
+        if (_liveAvailable.value.isEmpty()) {
             log("O motor não informou PIDs padrão com fórmula conhecida")
             return@exclusive
         }
-        val values = LinkedHashMap<Int, LiveValue>()
-        pids.forEach { p -> ObdPids.defs[p]!!.let { values[p] = LiveValue(p, it.name, it.unit, null) } }
-        _live.value = values.values.toList()
+        val raw = HashMap<Int, Pair<ObdResult, Double?>>()
+        fun status(r: ObdResult?, v: Double?): String? = when {
+            v != null -> null
+            r == null -> null
+            r is ObdResult.Ok -> "não decodificada · ${r.hex}"
+            else -> Discovery.describe(r)
+        }
+        fun publish(selected: List<Int>) {
+            _live.value = selected.map { id ->
+                val d = LiveSelection.derived[id]
+                if (d != null) {
+                    val value = if (id == LiveSelection.BOOST) LiveSelection.boostBar(raw[0x0B]?.second, raw[0x33]?.second) else null
+                    val missing = d.needs.firstOrNull { raw[it]?.second == null }
+                    LiveValue(id, d.name, d.unit, value, if (value == null && missing != null) status(raw[missing]?.first, null) else null)
+                } else {
+                    val (r, v) = raw[id] ?: (null to null)
+                    LiveValue(id, LiveSelection.name(id), LiveSelection.unit(id), v, status(r, v))
+                }
+            }
+        }
         // Rápidos a cada volta; lentos (temperaturas, nível) a cada 10 voltas.
         val slow = setOf(0x05, 0x0F, 0x1F, 0x21, 0x2F, 0x30, 0x31, 0x33, 0x46, 0x5C, 0x63)
         var round = 0
         while (kotlin.coroutines.coroutineContext.isActive) {
-            for (p in pids) {
-                if (p in slow && round % 10 != 0) continue
+            val selected = _liveSelection.value
+            // O nível do tanque é lido mesmo desmarcado: alimenta a detecção de abastecimento.
+            val reads = LiveSelection.pidsToRead(selected) + (if (FUEL_LEVEL_PID in supported) listOf(FUEL_LEVEL_PID) else emptyList())
+            publish(selected)
+            for (p in reads.distinct()) {
+                if (p in slow && round % 10 != 0 && raw.containsKey(p)) continue
                 val (r, v) = e.readPid(Modules.ENGINE, p)
-                values[p] = values[p]!!.copy(value = v, status = if (v != null) null else if (r is ObdResult.Ok) "não decodificada · ${r.hex}" else Discovery.describe(r))
+                raw[p] = r to v
                 if (p == FUEL_LEVEL_PID && v != null) {
                     val stored = _garage.value.lastFuelLevelPct
                     if (stored == null || kotlin.math.abs(v - stored) >= 1.0) recordFuelLevel(v)
                 }
-                _live.value = values.values.toList()
+                publish(_liveSelection.value)
             }
+            if (reads.isEmpty()) delay(500)
             round++
         }
     }
@@ -421,8 +474,20 @@ class ObdViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     fun clearDtcs(module: Module) = exclusive("Limpeza de falhas") { e ->
+        // Lê antes de apagar: depois da limpeza o módulo não guarda mais o que havia.
+        val reads = e.readDtcs(module).filter { it.mode == "03" || it.mode == "07" }
+        // Leitura sem resposta não é "sem códigos": não dá para saber o que foi apagado.
+        val readFailed = reads.any { it.codes == null }
+        val before = reads.flatMap { it.codes.orEmpty() }.distinct()
         val r = e.clearDtcs(module)
-        log("Limpeza em ${module.name}: ${Discovery.describe(r)}")
+        val described = before.joinToString("; ") { "$it ${DtcCatalog.describe(it).summary()}" }
+        val what = when {
+            before.isNotEmpty() -> "apagados: $described" + if (readFailed) " (leitura incompleta)" else ""
+            readFailed -> "não foi possível ler os códigos antes"
+            else -> "não havia códigos"
+        }
+        log("Limpeza em ${module.name}: ${Discovery.describe(r)} · $what")
+        _lastCleared.value = ClearedCodes(module, before, System.currentTimeMillis(), r is ObdResult.Ok, readFailed)
         delay(500)
         _dtcs.value = e.readDtcs(Modules.ENGINE) + e.readDtcs(Modules.TRANSMISSION)
     }
@@ -544,6 +609,8 @@ class ObdViewModel(app: Application) : AndroidViewModel(app) {
         private const val KEY_ADDRESS = "ultimo_adaptador"
         private const val KEY_BLE = "ultimo_adaptador_ble"
         private const val KEY_NAME = "ultimo_adaptador_nome"
+        private const val KEY_LIVE_SELECTION = "ao_vivo_selecao"
+        private const val KEY_LIVE_AVAILABLE = "ao_vivo_disponiveis"
     }
 
     override fun onCleared() {
