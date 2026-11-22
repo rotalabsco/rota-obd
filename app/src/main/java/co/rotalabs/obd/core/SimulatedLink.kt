@@ -51,6 +51,8 @@ class SimulatedLink(private val chunkSize: Int = 20, private val latencyMs: Long
             cmd == "0105" -> fmt("4105%02X".format(85 + 40))
             cmd == "010C" -> fmt("410C%04X".format(rpm * 4))
             cmd == "010D" -> fmt("410D%02X".format((rpm - 800) / 10))
+            // Carga acompanha a rotação (marcha lenta ~13 %), para o consumo estimado ter o que mostrar.
+            cmd == "0104" -> fmt("4104%02X".format(((13 + (rpm - 800) / 25) * 255 / 100).coerceIn(0, 255)))
             cmd == "010F" -> fmt("410F%02X".format(30 + 40))
             cmd == "010B" -> fmt("410B%02X".format(100 + (rpm - 800) / 8))
             cmd == "0123" -> fmt("4123%04X".format(3500 + rpm))

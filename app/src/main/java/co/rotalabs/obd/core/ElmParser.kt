@@ -19,7 +19,18 @@ sealed class ObdResult {
     object Timeout : ObdResult()
 }
 
-fun IntArray.toHex(): String = joinToString("") { "%02X".format(it) }
+private val HEX = "0123456789ABCDEF".toCharArray()
+
+/** Hex em maiúsculas sem separador. Sem String.format: roda a cada leitura e pesava na CPU. */
+fun IntArray.toHex(): String {
+    val out = CharArray(size * 2)
+    for (i in indices) {
+        val b = this[i] and 0xFF
+        out[i * 2] = HEX[b ushr 4]
+        out[i * 2 + 1] = HEX[b and 0x0F]
+    }
+    return String(out)
+}
 
 fun nrcMeaning(nrc: Int): String = when (nrc) {
     0x10 -> "recusado (geral)"

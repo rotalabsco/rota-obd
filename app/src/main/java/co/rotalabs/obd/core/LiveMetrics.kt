@@ -6,7 +6,20 @@ import java.util.Locale
 object Formato {
     private val ptBR = Locale("pt", "BR")
 
-    fun numero(v: Double, casas: Int): String = String.format(ptBR, "%,.${casas}f", v)
+    // Criar um formatador a cada número custava caro (era o maior gasto de CPU do painel e do Ao vivo).
+    private val formatos = ThreadLocal.withInitial { arrayOfNulls<java.text.DecimalFormat>(4) }
+
+    fun numero(v: Double, casas: Int): String {
+        val c = casas.coerceIn(0, 3)
+        val cache = formatos.get()!!
+        val f = cache[c] ?: (java.text.NumberFormat.getNumberInstance(ptBR) as java.text.DecimalFormat).apply {
+            minimumFractionDigits = c
+            maximumFractionDigits = c
+            isGroupingUsed = true
+            roundingMode = java.math.RoundingMode.HALF_UP
+        }.also { cache[c] = it }
+        return f.format(v)
+    }
 
     fun dinheiro(v: Double): String = "R$ " + numero(v, 2)
 
@@ -15,7 +28,7 @@ object Formato {
         "rpm", "km/h", "km", "s", "Nm", "kPa", "%", "" -> 0
         "°C" -> if (kotlin.math.abs(v) >= 100) 0 else 1
         "V", "L/h", "g/s", "km/L" -> 1
-        "bar" -> 2
+        "bar" -> if (kotlin.math.abs(v) >= 100) 0 else 2
         else -> if (kotlin.math.abs(v) >= 100) 0 else 1
     }
 

@@ -15,6 +15,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 30
 
       - uses: actions/setup-java@v4
         with:
@@ -66,11 +68,18 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
+          # As linhas "- ..." aparecem no app, na aba Versão, como "o que mudou".
+          {
+            echo "APK de depuração gerado a partir de ${{ github.sha }}. Instale na central e permita fontes desconhecidas."
+            echo
+            echo "O que mudou (commits recentes):"
+            git log -15 --no-merges --pretty='- %s'
+          } > notas.md
           gh release delete latest --yes --cleanup-tag || true
           gh release create latest rota-obd-debug.apk \
             --prerelease \
             --title "Versão de teste #${{ github.run_number }}" \
-            --notes "APK de depuração gerado automaticamente a partir de ${{ github.sha }}. Instale na central e permita fontes desconhecidas."
+            --notes-file notas.md
 
       - name: Abrir issue com o erro de build
         if: failure() && github.event_name != 'pull_request'

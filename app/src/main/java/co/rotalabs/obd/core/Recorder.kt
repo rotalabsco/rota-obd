@@ -26,24 +26,45 @@ object NoopRecorder : Recorder {
     override fun record(kind: String, fields: Map<String, Any?>) {}
 }
 
+/**
+ * A escrita no arquivo roda numa thread própria, fora da tela: antes cada leitura escrevia e
+ * descarregava o arquivo na thread de interface. A ordem das linhas é mantida (fila única) e o
+ * arquivo é descarregado sempre que a fila esvazia, então no máximo as últimas linhas ficam no buffer.
+ */
 class NdjsonRecorder(val file: File) : Recorder {
     private val start = System.nanoTime()
     private val writer: BufferedWriter = file.bufferedWriter()
+    private val io = java.util.concurrent.Executors.newSingleThreadExecutor { r -> Thread(r, "gravacao").apply { isDaemon = true } }
+    private val pending = java.util.concurrent.atomic.AtomicInteger()
+    @Volatile private var closed = false
 
     @Synchronized
     override fun record(kind: String, fields: Map<String, Any?>) {
+        if (closed) return
         val all = LinkedHashMap<String, Any?>()
         all["t_ms"] = (System.nanoTime() - start) / 1_000_000
         all["ts"] = System.currentTimeMillis()
         all["kind"] = kind
         all.putAll(fields)
-        writer.write(Json.obj(all))
-        writer.newLine()
-        writer.flush()
+        val line = Json.obj(all)
+        pending.incrementAndGet()
+        io.execute {
+            runCatching {
+                writer.write(line)
+                writer.newLine()
+                if (pending.decrementAndGet() == 0) writer.flush()
+            }
+        }
     }
 
     @Synchronized
-    override fun close() = writer.close()
+    override fun close() {
+        if (closed) return
+        closed = true
+        io.execute { runCatching { writer.close() } }
+        io.shutdown()
+        io.awaitTermination(3, java.util.concurrent.TimeUnit.SECONDS)
+    }
 }
 
 /** JSON mínimo, sem dependências. */

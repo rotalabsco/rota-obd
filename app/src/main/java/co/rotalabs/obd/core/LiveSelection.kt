@@ -11,10 +11,16 @@ object LiveSelection {
     /** Valor calculado, sem PID próprio: pressão do turbo = MAP (0B) − barométrica (33). */
     const val BOOST = 0x100
 
+    /** Consumo estimado agora (km/L andando, L/h parado) e média da viagem; veja [FuelEstimate]. */
+    const val CONSUMPTION = 0x101
+    const val TRIP_AVG = 0x102
+
     data class Derived(val id: Int, val name: String, val unit: String, val needs: List<Int>, val note: String)
 
     val derived: Map<Int, Derived> = listOf(
         Derived(BOOST, "Pressão do turbo", "bar", listOf(0x0B, 0x33), "MAP − barométrica"),
+        Derived(CONSUMPTION, "Consumo", "km/L", listOf(0x04, 0x0C, 0x0D), "estimado pela carga e rotação"),
+        Derived(TRIP_AVG, "Média da viagem", "km/L", listOf(0x04, 0x0C, 0x0D), "estimada desde a partida"),
     ).associateBy { it.id }
 
     /**
@@ -22,11 +28,15 @@ object LiveSelection {
      * velocidade, rotação e turbo primeiro; depois o que serve de alerta.
      */
     private val preferredOrder = listOf(
-        0x0D, 0x0C, BOOST, 0x5E, 0x05, 0x23, 0x5C, 0x0F, 0x04, 0x42, 0x49, 0x2C, 0x2F,
+        0x0D, 0x0C, BOOST, CONSUMPTION, TRIP_AVG, 0x5E, 0x05, 0x23, 0x5C, 0x0F, 0x04, 0x42, 0x49, 0x2C, 0x2F,
     )
 
     fun name(id: Int): String = derived[id]?.name ?: ObdPids.defs[id]?.name ?: "PID %02X".format(id)
-    fun unit(id: Int): String = derived[id]?.unit ?: ObdPids.defs[id]?.unit ?: ""
+    fun unit(id: Int): String = derived[id]?.unit ?: ObdPids.defs[id]?.unit?.let { if (it == "kPa") "bar" else it } ?: ""
+
+    /** Pressões aparecem em bar (1 bar = 100 kPa); o arquivo da sessão guarda kPa, como o OBD manda. */
+    fun shown(id: Int, value: Double?): Double? =
+        if (derived[id] == null && ObdPids.defs[id]?.unit == "kPa") value?.div(100.0) else value
 
     /** Tudo o que este carro permite mostrar, na ordem de exibição. */
     fun available(supported: Collection<Int>): List<Int> {

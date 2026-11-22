@@ -18,11 +18,20 @@ object GuidedCollection {
     }
 
     sealed interface Action {
-        /** A Descoberta completa, com o serviço 21. */
-        data object Discovery : Action
+        /**
+         * A Descoberta, com o serviço 21. [full]: varre os 256 identificadores de cada módulo. Sem ele,
+         * relê só os que já responderam numa varredura completa (bem mais rápido). A varredura completa
+         * fica no começo (motor desligado) e com o motor quente, para não perder um identificador que
+         * só responda com o motor ligado.
+         */
+        data class Discovery(val full: Boolean = false) : Action
 
-        /** Lê [reads] em rodízio por [durationSec] segundos, ou até parar, se null. */
-        data class Watch(val reads: List<Read>, val durationSec: Int?, val cues: List<Cue>) : Action
+        /**
+         * Lê [reads] em rodízio por [durationSec] segundos, ou até parar, se null. [rotateKnown]: a cada
+         * volta, lê também esse tanto de LIDs da última Descoberta completa, um pedaço por volta, até
+         * passar por todos (as fixas a cada ~3 s, as do rodízio a cada ~1 min).
+         */
+        data class Watch(val reads: List<Read>, val durationSec: Int?, val cues: List<Cue>, val rotateKnown: Int = 0) : Action
 
         /** Passo sem leitura: a pessoa faz e marca como feito. */
         data object Manual : Action
@@ -51,14 +60,6 @@ object GuidedCollection {
     private val SPEED = pid(0x0D)
     private val LOAD = pid(0x04)
 
-    private val engineCues = listOf(
-        Cue(0, "Marcha lenta. Não toque em nada"),
-        Cue(15, "Acelere até uns 2.000 rpm e segure"),
-        Cue(25, "Solte o acelerador"),
-        Cue(35, "Ligue o ar-condicionado"),
-        Cue(45, "Desligue o ar-condicionado"),
-    )
-
     private val gearCues = listOf(
         Cue(0, "Pé firme no freio. Alavanca em P"),
         Cue(10, "Passe para R"),
@@ -67,46 +68,26 @@ object GuidedCollection {
         Cue(45, "Volte para P"),
     )
 
+    /**
+     * Roteiro enxuto: o que dá para fazer de verdade antes de sair, sem ficar parado segurando
+     * rotação. O grosso dos dados vem da viagem, que lê em rodízio todos os LIDs que responderam.
+     */
     val steps: List<Step> = listOf(
         Step(
             "d1-ignicao", GROUP_BEFORE, "Ignição ligada, motor desligado",
             "Gire a chave até acender o painel, sem dar partida. Toque em Começar e espere terminar (uns 2 minutos).",
-            Action.Discovery,
+            Action.Discovery(full = true),
         ),
         Step(
-            "d2-frio-lenta", GROUP_BEFORE, "Motor frio em marcha lenta",
-            "Dê a partida e deixe em marcha lenta, sem acelerar e com o ar desligado. Toque em Começar e espere terminar.",
-            Action.Discovery,
+            "d2-frio-lenta", GROUP_BEFORE, "Motor ligado, parado",
+            "Dê a partida e deixe em marcha lenta, sem acelerar. Toque em Começar e espere terminar (uns 30 segundos).",
+            Action.Discovery(),
         ),
         Step(
-            "d3-frio-ar", GROUP_BEFORE, "Marcha lenta com o ar ligado",
-            "Ligue o ar-condicionado e deixe em marcha lenta. Toque em Começar e espere terminar.",
-            Action.Discovery,
-        ),
-        Step(
-            "d4-2000rpm", GROUP_BEFORE, "Rotação firme em 2.000 rpm",
-            "Desligue o ar. Acelere até uns 2.000 rpm e segure firme durante toda a leitura (uns 2 minutos).",
-            Action.Discovery,
-        ),
-        Step(
-            "cambio-alavanca-a", GROUP_BEFORE, "Câmbio: P, R, N, D (1ª parte)",
-            "Carro parado, freio de mão puxado e pé firme no freio o tempo todo; ninguém na frente nem atrás do carro. Siga as trocas que aparecem na tela (1 minuto).",
-            Action.Watch(listOf(lid(T, 0x05)), 60, gearCues),
-        ),
-        Step(
-            "cambio-alavanca-b", GROUP_BEFORE, "Câmbio: P, R, N, D (2ª parte)",
-            "Mesma sequência, lendo outro bloco de dados do câmbio (1 minuto).",
-            Action.Watch(listOf(lid(T, 0x08)), 60, gearCues),
-        ),
-        Step(
-            "motor-acelerar-a", GROUP_BEFORE, "Motor: acelerar e ar (1ª parte)",
-            "Em P, motor em marcha lenta. Siga o que aparece na tela (1 minuto).",
-            Action.Watch(listOf(lid(E, 0x01), RPM), 60, engineCues),
-        ),
-        Step(
-            "motor-acelerar-b", GROUP_BEFORE, "Motor: acelerar e ar (2ª parte)",
-            "Mesma sequência, lendo outro bloco de dados do motor (1 minuto).",
-            Action.Watch(listOf(lid(E, 0x02), RPM), 60, engineCues),
+            "cambio-alavanca-a", GROUP_BEFORE, "Câmbio: P, R, N, D (opcional)",
+            "Se der: carro parado, freio de mão puxado e pé firme no freio o tempo todo; ninguém na frente nem atrás do carro. " +
+                "Siga as trocas que aparecem na tela (1 minuto). Se não der, pule para a viagem.",
+            Action.Watch(listOf(lid(T, 0x05), lid(T, 0x08)), 60, gearCues),
         ),
         Step(
             "viagem", GROUP_TRIP, "Gravar a viagem",
@@ -117,26 +98,13 @@ object GuidedCollection {
                 listOf(lid(T, 0x05), lid(T, 0x08), lid(E, 0x01), lid(E, 0x02), RPM, SPEED, COOLANT, LOAD),
                 null,
                 listOf(Cue(0, "Pode dirigir. Não precisa mexer em nada")),
+                rotateKnown = 8,
             ),
         ),
         Step(
-            "d6-quente-lenta", GROUP_ARRIVAL, "Motor quente em marcha lenta",
-            "Ar desligado, motor em marcha lenta. Toque em Começar e espere terminar.",
-            Action.Discovery,
-        ),
-        Step(
-            "d7-quente-ar", GROUP_ARRIVAL, "Motor quente com o ar ligado",
-            "Ligue o ar-condicionado e deixe em marcha lenta. Toque em Começar e espere terminar.",
-            Action.Discovery,
-        ),
-        Step(
-            "quente-temperaturas", GROUP_ARRIVAL, "Temperaturas com motor quente",
-            "Em P, motor em marcha lenta, ar desligado. Não mexa em nada por 1 minuto.",
-            Action.Watch(
-                listOf(lid(E, 0x02), lid(E, 0x4F), lid(T, 0x05), lid(T, 0x08), COOLANT),
-                60,
-                listOf(Cue(0, "Marcha lenta. Não toque em nada")),
-            ),
+            "d6-quente-lenta", GROUP_ARRIVAL, "Motor quente, parado",
+            "Na chegada, ainda com o motor ligado e quente, em P. Toque em Começar e espere terminar (uns 2 minutos).",
+            Action.Discovery(full = true),
         ),
         Step(
             "tela-central", GROUP_SCREEN, "Densidade e prints da tela",
