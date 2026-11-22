@@ -43,6 +43,8 @@ import co.rotalabs.obd.core.Modules
 import co.rotalabs.obd.core.NdjsonRecorder
 import co.rotalabs.obd.core.ObservingRecorder
 import co.rotalabs.obd.core.PanelItems
+import co.rotalabs.obd.core.PerfilMitsubishi
+import co.rotalabs.obd.core.Formato
 import co.rotalabs.obd.core.ObdPids
 import co.rotalabs.obd.core.ObdResult
 import co.rotalabs.obd.core.SimulatedLink
@@ -74,7 +76,15 @@ sealed class ConnState {
 }
 
 /** Uma leitura ao vivo. Sem valor, [status] diz por quê (sem dados, tempo esgotado...): nunca vira zero. */
-data class LiveValue(val pid: Int, val name: String, val unit: String, val value: Double?, val status: String? = null)
+data class LiveValue(
+    val pid: Int,
+    val name: String,
+    val unit: String,
+    val value: Double?,
+    val status: String? = null,
+    /** Valor em texto quando não é número (ex.: marcha "3ª", "P"). */
+    val text: String? = null,
+)
 
 data class LidWatch(
     val module: Module,
@@ -161,6 +171,10 @@ class ObdViewModel(app: Application) : AndroidViewModel(app) {
     private var currentName = ""
     private var currentDetail = ""
     private val prefs = app.getSharedPreferences("rota-obd", Context.MODE_PRIVATE)
+    /** Gravação automática da viagem ao ligar o motor (veja maybeAutoTrip). */
+    private val _autoTrip = MutableStateFlow(prefs.getBoolean(KEY_AUTO_TRIP, true))
+    val autoTrip: StateFlow<Boolean> = _autoTrip
+    private var autoTripSuppressed = false
     private val _guidedDone = MutableStateFlow(prefs.getStringSet(KEY_GUIDED_DONE, null)?.toSet() ?: emptySet())
     val guidedDone: StateFlow<Set<String>> = _guidedDone
     private val _guidedRun = MutableStateFlow<GuidedRun?>(null)
@@ -188,7 +202,28 @@ class ObdViewModel(app: Application) : AndroidViewModel(app) {
     // ---------- Painel flutuante ----------
 
     private val _pidReadings = MutableStateFlow<Map<Int, PanelItems.Reading>>(emptyMap())
+    /** Últimas respostas do câmbio (21 08 e 21 02) com a hora, para o perfil da Pajero. */
+    private val _transmission = MutableStateFlow<Map<String, Pair<IntArray, Long>>>(emptyMap())
+
+    private fun profileActive(): Boolean = PerfilMitsubishi.active(_garage.value.vehicle.calibration)
+
+    /** Resposta do câmbio se tiver menos de 60 s. */
+    private fun transmission(req: String): IntArray? =
+        _transmission.value[req]?.takeIf { System.currentTimeMillis() - it.second <= 60_000 }?.first
+
+    /** Valores do perfil para o Ao vivo e o painel: temperatura do fluido e marcha. */
+    private fun profileValue(id: Int): Pair<Double?, String?> = when (id) {
+        PerfilMitsubishi.ATF -> PerfilMitsubishi.atf(transmission(PerfilMitsubishi.REQ_2108)) to null
+        PerfilMitsubishi.GEAR -> null to PerfilMitsubishi.gearText(transmission(PerfilMitsubishi.REQ_2108), transmission(PerfilMitsubishi.REQ_2102))
+        PerfilMitsubishi.ODO -> _transmission.value[PerfilMitsubishi.REQ_2103]?.first.let { PerfilMitsubishi.odometer(it) } to null
+        else -> null to null
+    }
+
     private val trip = FuelEstimate.Trip()
+    private val smoother = FuelEstimate.Smoother()
+
+    /** Consumo instantâneo suavizado, já em texto ("11,8 km/L ▲", "∞ km/L"), para o painel. */
+    private val _instantText = MutableStateFlow<String?>(null)
     private val _tripAverage = MutableStateFlow<Double?>(null)
     val tripAverage: StateFlow<Double?> = _tripAverage
     private val _appVisible = MutableStateFlow(true)
@@ -237,12 +272,24 @@ class ObdViewModel(app: Application) : AndroidViewModel(app) {
 
     /** Guarda o último valor de cada PID do motor, lido pelo Ao vivo ou pela Coleta guiada. */
     private fun observeReading(kind: String, fields: Map<String, Any?>) {
+        // Câmbio da Pajero (serviço 21): guarda a última resposta do 21 08 e do 21 02, venha de onde vier.
+        if ((kind == "lid_watch" || kind == "lid_sweep") && fields["status"] == "ok") {
+            val req = fields["req"] as? String
+            val mod = fields["mod"]
+            val wanted = (mod == Modules.TRANSMISSION.id && (req == PerfilMitsubishi.REQ_2108 || req == PerfilMitsubishi.REQ_2102)) ||
+                (mod == Modules.ENGINE.id && req == PerfilMitsubishi.REQ_2103)
+            if (req != null && wanted) {
+                PerfilMitsubishi.hex(fields["resp"] as? String)?.let { _transmission.value = _transmission.value + (req to (it to System.currentTimeMillis())) }
+            }
+            return
+        }
         if (kind != "pid" || fields["mod"] != Modules.ENGINE.id) return
         val pid = (fields["req"] as? String)?.takeIf { it.length == 4 }?.substring(2)?.toIntOrNull(16) ?: return
         val value = fields["value"] as? Double ?: return
         val now = System.currentTimeMillis()
         val readings = _pidReadings.value + (pid to PanelItems.Reading(value, now))
         _pidReadings.value = readings
+        // (o resto da função trata os PIDs do motor)
         // A cada rotação lida, soma o consumo estimado da viagem com a carga e a velocidade mais recentes.
         if (pid == 0x0C) {
             val load = readings[0x04]?.takeIf { now - it.atMillis <= 10_000 }?.value
@@ -250,6 +297,8 @@ class ObdViewModel(app: Application) : AndroidViewModel(app) {
             if (load != null && speed != null) {
                 trip.add(load, value, speed, now)
                 _tripAverage.value = trip.average()
+                smoother.add(load, value, speed, now)
+                _instantText.value = FuelEstimate.instantText(smoother.value(), smoother.fuelCut(), trip.average())
             }
         }
     }
@@ -282,7 +331,13 @@ class ObdViewModel(app: Application) : AndroidViewModel(app) {
                     else -> "● Conectado · sem leitura"
                 }
                 val readings = if (live.busy == null) emptyMap() else live.readings
-                panel.update(status, recording, PanelItems.lines(items, readings, live.volts, System.currentTimeMillis(), _tripAverage.value))
+                val profile = PerfilMitsubishi.ids.filter { it in items }.associateWith { id ->
+                    val (v, t) = profileValue(id)
+                    t ?: v?.let { Formato.leitura(it, PerfilMitsubishi.unit(id)) + " " + PerfilMitsubishi.unit(id) } ?: "—"
+                }.toMutableMap()
+                // Consumo instantâneo suavizado, com ▲/▼ contra a média e ∞ no corte de injeção.
+                if (LiveSelection.CONSUMPTION in items && live.busy != null) _instantText.value?.let { profile[LiveSelection.CONSUMPTION] = it }
+                panel.update(status, recording, PanelItems.lines(items, readings, live.volts, System.currentTimeMillis(), _tripAverage.value, profile))
             }
         }
     }
@@ -496,6 +551,7 @@ class ObdViewModel(app: Application) : AndroidViewModel(app) {
 
     /** Abre a conexão e prepara o adaptador. Devolve true se ficou conectado. */
     private suspend fun openConnection(found: FoundDevice?, silent: Boolean): Boolean {
+        autoTripSuppressed = false
         disconnectInternal()
         val name = found?.name ?: "Simulador"
         if (!silent) _conn.value = ConnState.Connecting(name)
@@ -534,6 +590,11 @@ class ObdViewModel(app: Application) : AndroidViewModel(app) {
                 if (resumeLive) {
                     resumeLive = false
                     viewModelScope.launch { startLive() }
+                } else {
+                    viewModelScope.launch {
+                        delay(500)
+                        maybeAutoTrip(_voltage.value)
+                    }
                 }
             }
             true
@@ -622,6 +683,8 @@ class ObdViewModel(app: Application) : AndroidViewModel(app) {
                 if (volts != null) _voltage.value = volts
                 val mode = policy.observe(System.currentTimeMillis(), volts)
                 _sleepMode.value = mode
+                // Ligou o motor depois de conectar (ex.: conectou só com a ignição): começa a gravar a viagem.
+                if (mode == SleepPolicy.Mode.ACTIVE) maybeAutoTrip(volts)
                 when (mode) {
                     SleepPolicy.Mode.ACTIVE -> if (quiet) {
                         quiet = false
@@ -700,7 +763,31 @@ class ObdViewModel(app: Application) : AndroidViewModel(app) {
 
     fun stop() {
         resumeLive = false
+        // Parou de propósito: a gravação automática só volta na próxima conexão.
+        autoTripSuppressed = true
         job?.cancel()
+    }
+
+    // ---------- Gravação automática da viagem ----------
+
+
+    fun setAutoTrip(on: Boolean) {
+        _autoTrip.value = on
+        prefs.edit().putBoolean(KEY_AUTO_TRIP, on).apply()
+        if (on) maybeAutoTrip(_voltage.value)
+    }
+
+    /**
+     * Com o adaptador conectado, o motor ligado (alternador carregando) e nada rodando, começa sozinho a
+     * gravação da viagem da Coleta guiada. Assim toda viagem vira dado, sem tocar na central.
+     */
+    private fun maybeAutoTrip(volts: Double?) {
+        if (!_autoTrip.value || autoTripSuppressed) return
+        if (_conn.value !is ConnState.Connected || _busy.value != null || job?.isActive == true) return
+        if (volts == null || volts < AUTO_TRIP_VOLTS) return
+        val step = GuidedCollection.step("viagem") ?: return
+        log("Gravação automática da viagem (motor ligado, %.1f V)".format(Locale.ROOT, volts))
+        runGuidedStep(step)
     }
 
     // ---------- Leituras ----------
@@ -756,7 +843,14 @@ class ObdViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     private fun setLiveAvailable(supported: List<Int>) {
-        val available = LiveSelection.available(supported)
+        val available = LiveSelection.order(LiveSelection.available(supported) + (if (profileActive()) PerfilMitsubishi.ids else emptyList()))
+        // Na primeira vez que o perfil da Pajero aparece, marca câmbio e marcha mesmo em quem já tinha escolhido os dados.
+        if (profileActive() && !prefs.getBoolean(KEY_PROFILE_OFFERED, false)) {
+            LiveSelection.decode(prefs.getString(KEY_LIVE_SELECTION, null))?.let { saved ->
+                prefs.edit().putString(KEY_LIVE_SELECTION, LiveSelection.encode(saved + PerfilMitsubishi.autoSelect)).apply()
+            }
+            prefs.edit().putBoolean(KEY_PROFILE_OFFERED, true).apply()
+        }
         _liveAvailable.value = available
         prefs.edit().putString(KEY_LIVE_AVAILABLE, LiveSelection.encode(available)).apply()
         _liveSelection.value = LiveSelection.effective(LiveSelection.decode(prefs.getString(KEY_LIVE_SELECTION, null)), available)
@@ -782,13 +876,19 @@ class ObdViewModel(app: Application) : AndroidViewModel(app) {
                 if (d != null) {
                     val (value, unit) = when (id) {
                         LiveSelection.BOOST -> LiveSelection.boostBar(raw[0x0B]?.second, raw[0x33]?.second) to d.unit
-                        LiveSelection.CONSUMPTION ->
-                            FuelEstimate.instant(raw[0x04]?.second, raw[0x0C]?.second, raw[0x0D]?.second) ?: (null to d.unit)
+                        LiveSelection.CONSUMPTION -> smoother.value() ?: (null to d.unit)
                         LiveSelection.TRIP_AVG -> _tripAverage.value to d.unit
                         else -> null to d.unit
                     }
                     val missing = d.needs.firstOrNull { raw[it]?.second == null }
-                    LiveValue(id, d.name, unit, value, if (value == null && missing != null) status(raw[missing]?.first, null) else null)
+                    val cut = id == LiveSelection.CONSUMPTION && smoother.fuelCut()
+                    LiveValue(
+                        id, d.name, unit, value, if (value == null && missing != null) status(raw[missing]?.first, null) else null,
+                        text = if (cut) "∞" else null,
+                    )
+                } else if (id in PerfilMitsubishi.ids) {
+                    val (value, text) = profileValue(id)
+                    LiveValue(id, LiveSelection.name(id), LiveSelection.unit(id), value, text = text)
                 } else {
                     val (r, v) = raw[id] ?: (null to null)
                     LiveValue(id, LiveSelection.name(id), LiveSelection.unit(id), LiveSelection.shown(id, v), status(r, v))
@@ -812,6 +912,19 @@ class ObdViewModel(app: Application) : AndroidViewModel(app) {
                     val stored = _garage.value.lastFuelLevelPct
                     if (stored == null || kotlin.math.abs(v - stored) >= 1.0) recordFuelLevel(v)
                 }
+                publish(_liveSelection.value)
+            }
+            // Câmbio da Pajero: a cada 3 voltas lê o 21 08 (fluido, alavanca) e o 21 02 (marcha), se estiverem
+            // no Ao vivo ou no painel. Trocar de módulo custa dois comandos, por isso não vai a cada volta.
+            val wantProfile = (selected + (if (_panelEnabled.value) _panelItems.value else emptyList())).any { it in PerfilMitsubishi.ids }
+            val wanted = selected + (if (_panelEnabled.value) _panelItems.value else emptyList())
+            if (wantProfile && profileActive() && round % 3 == 0 && (PerfilMitsubishi.ATF in wanted || PerfilMitsubishi.GEAR in wanted)) {
+                e.request(Modules.TRANSMISSION, PerfilMitsubishi.REQ_2108, 1000, kind = "lid_watch")
+                e.request(Modules.TRANSMISSION, PerfilMitsubishi.REQ_2102, 1000, kind = "lid_watch")
+                publish(_liveSelection.value)
+            }
+            if (PerfilMitsubishi.ODO in wanted && profileActive() && round % 20 == 0) {
+                e.request(Modules.ENGINE, PerfilMitsubishi.REQ_2103, 1000, kind = "lid_watch")
                 publish(_liveSelection.value)
             }
             if (reads.isEmpty()) delay(500)
@@ -928,8 +1041,26 @@ class ObdViewModel(app: Application) : AndroidViewModel(app) {
                 runCatching {
                     rec?.record(ExportLayout.MARKER_KIND, mapOf("event" to ExportLayout.EVENT_END, "step" to step.id, "status" to status))
                 }
+                if (openEnded) _live.value = emptyList()
                 log("Coleta guiada: ${step.title} · $status")
                 _guidedRun.value = null
+            }
+        }
+    }
+
+    /** Monta o Ao vivo a partir das leituras da gravação da viagem: só o que ela está lendo aparece. */
+    private fun publishTripView() {
+        val now = System.currentTimeMillis()
+        val r = _pidReadings.value
+        fun fresh(p: Int) = r[p]?.takeIf { now - it.atMillis <= PanelItems.STALE_MS }?.value
+        _live.value = _liveSelection.value.mapNotNull { id ->
+            val name = LiveSelection.name(id)
+            when (id) {
+                LiveSelection.BOOST -> LiveSelection.boostBar(fresh(0x0B), fresh(0x33))?.let { LiveValue(id, name, "bar", it) }
+                LiveSelection.CONSUMPTION -> smoother.value()?.let { (v, u) -> LiveValue(id, name, u, v, text = if (smoother.fuelCut()) "∞" else null) }
+                LiveSelection.TRIP_AVG -> LiveValue(id, name, "km/L", _tripAverage.value)
+                in PerfilMitsubishi.ids -> profileValue(id).let { (v, t) -> if (v == null && t == null) null else LiveValue(id, name, LiveSelection.unit(id), v, text = t) }
+                else -> fresh(id)?.let { LiveValue(id, name, LiveSelection.unit(id), LiveSelection.shown(id, it)) }
             }
         }
     }
@@ -954,10 +1085,18 @@ class ObdViewModel(app: Application) : AndroidViewModel(app) {
             }
             val rotated = if (rotation.isEmpty()) emptyList() else
                 List(minOf(a.rotateKnown, rotation.size)) { rotation[(rotIdx + it) % rotation.size] }.also { rotIdx = (rotIdx + it.size) % rotation.size }
-            for (r in a.reads + extra + rotated) {
+            // Na viagem, carga, rotação e velocidade entram a cada 3 leituras: o consumo instantâneo fica com
+            // cerca de 1 s de atraso em vez de uma volta inteira (~3 s).
+            val all = a.reads + extra + rotated
+            val core = if (a.durationSec == null) all.filter { it.service == 0x01 && it.id in FAST_PIDS } else emptyList()
+            val seq = if (core.isEmpty()) all else (all - core.toSet()).chunked(3).flatMap { core + it }.ifEmpty { core }
+            for ((i, r) in seq.withIndex()) {
                 if (r.service == 0x01) e.readPid(r.module, r.id) else e.request(r.module, r.hex, 1000, kind = "lid_watch")
                 samples++
+                // Na viagem, o Ao vivo mostra o que a gravação está lendo (cerca de 1x por segundo).
+                if (a.durationSec == null && core.isNotEmpty() && i % (core.size + 3) == core.size - 1) publishTripView()
             }
+            if (a.durationSec == null) publishTripView()
             _guidedRun.value = _guidedRun.value?.copy(samples = samples)
             delay(50)
         }
@@ -1066,6 +1205,10 @@ class ObdViewModel(app: Application) : AndroidViewModel(app) {
         const val LABEL_GUIDED = "Coleta guiada"
         private const val KEY_PANEL = "painel_flutuante"
         private const val KEY_KNOWN_LIDS = "lids_conhecidos"
+        private const val KEY_PROFILE_OFFERED = "perfil_mitsubishi_oferecido"
+        private const val KEY_AUTO_TRIP = "gravar_viagem_sozinho"
+        private val FAST_PIDS = setOf(0x04, 0x0C, 0x0D)
+        private const val AUTO_TRIP_VOLTS = 13.0
         private const val KEY_PANEL_ITEMS = "painel_flutuante_itens"
         private const val KEY_PANEL_X = "painel_flutuante_x"
         private const val KEY_PANEL_Y = "painel_flutuante_y"
