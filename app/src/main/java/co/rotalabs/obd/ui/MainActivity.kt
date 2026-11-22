@@ -788,7 +788,7 @@ private fun PanelCard(vm: ObdViewModel) {
                 Text("Painel por cima dos apps", style = MaterialTheme.typography.titleMedium, color = Rl.text)
                 Text(
                     "Com o Maps ou a música na tela, mostra um quadrinho com os valores escolhidos e se está gravando. " +
-                        "Arraste para mudar de lugar; toque nele para voltar ao Rota.OBD.",
+                        "Arraste para mudar de lugar; toque nele para voltar ao Rota.OBD; o ✕ fecha até a próxima conexão.",
                     style = MaterialTheme.typography.bodySmall, color = Rl.text3,
                 )
             }

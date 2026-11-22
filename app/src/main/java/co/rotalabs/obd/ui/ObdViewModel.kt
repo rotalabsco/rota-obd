@@ -234,9 +234,16 @@ class ObdViewModel(app: Application) : AndroidViewModel(app) {
     private val _panelItems = MutableStateFlow(PanelItems.decode(prefs.getString(KEY_PANEL_ITEMS, null)) ?: PanelItems.default)
     val panelItems: StateFlow<List<Int>> = _panelItems
 
+    /** O ✕ do painel fecha até a próxima conexão (o interruptor do painel desliga de vez). */
+    private val _panelDismissed = MutableStateFlow(false)
+
     private val panel = FloatingPanel(
         app,
         onMoved = { x, y -> prefs.edit().putInt(KEY_PANEL_X, x).putInt(KEY_PANEL_Y, y).apply() },
+        onClose = {
+            _panelDismissed.value = true
+            log("Painel fechado até a próxima conexão")
+        },
         onTap = {
             app.startActivity(
                 Intent(app, MainActivity::class.java)
@@ -311,8 +318,8 @@ class ObdViewModel(app: Application) : AndroidViewModel(app) {
         viewModelScope.launch {
             combine(
                 combine(_conn, _busy, _pidReadings, _voltage, _appVisible) { c, b, r, v, vis -> Live(c, b, r, v, vis) },
-                _panelEnabled, _panelItems, _overlayAllowed,
-            ) { live, enabled, items, allowed -> Triple(live, enabled && allowed, items) }
+                _panelEnabled, _panelItems, _overlayAllowed, _panelDismissed,
+            ) { live, enabled, items, allowed, dismissed -> Triple(live, enabled && allowed && !dismissed, items) }
                 // Atualizar o painel a cada leitura redesenhava a janela dezenas de vezes por segundo.
                 .sample(1000)
                 .collect { (live, on, items) ->
@@ -552,6 +559,7 @@ class ObdViewModel(app: Application) : AndroidViewModel(app) {
     /** Abre a conexão e prepara o adaptador. Devolve true se ficou conectado. */
     private suspend fun openConnection(found: FoundDevice?, silent: Boolean): Boolean {
         autoTripSuppressed = false
+        _panelDismissed.value = false
         disconnectInternal()
         val name = found?.name ?: "Simulador"
         if (!silent) _conn.value = ConnState.Connecting(name)
