@@ -20,6 +20,8 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Switch
+import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -53,6 +55,7 @@ fun GuidedScreen(vm: ObdViewModel, shareZip: () -> Unit) {
     val run by vm.guidedRun.collectAsState()
     val busy by vm.busy.collectAsState()
     val conn by vm.conn.collectAsState()
+    val autoTrip by vm.autoTrip.collectAsState()
     var selectedId by remember { mutableStateOf(GuidedCollection.nextPending(null, done)?.id ?: GuidedCollection.steps.first().id) }
     // Ao terminar um passo, leva para o próximo que falta.
     LaunchedEffect(done) {
@@ -65,6 +68,12 @@ fun GuidedScreen(vm: ObdViewModel, shareZip: () -> Unit) {
 
     Column(Modifier.fillMaxSize(), verticalArrangement = Arrangement.spacedBy(14.dp)) {
         ScreenHeader("Coleta guiada · ${done.size} de $total feitos", "Teste no carro, passo a passo") {
+            // Mesmo interruptor da tela Conexão: a gravação da viagem começa sozinha quando o motor liga.
+            Text("Gravar toda viagem sozinho", style = MaterialTheme.typography.bodyMedium, color = Rl.text2)
+            Switch(
+                autoTrip, vm::setAutoTrip,
+                colors = SwitchDefaults.colors(checkedTrackColor = Rl.orange, checkedThumbColor = Rl.onAccent, uncheckedTrackColor = Rl.sunken),
+            )
             GhostButton("Nova coleta", vm::resetGuided, enabled = running == null && done.isNotEmpty())
             SecondaryButton("Exportar (.zip)", shareZip, icon = RlIcons.share)
         }

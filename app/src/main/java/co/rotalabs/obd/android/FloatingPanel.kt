@@ -22,12 +22,13 @@ import kotlin.math.abs
  * Quadrinho por cima dos outros apps (Maps, música) com o status da leitura e os valores escolhidos.
  *
  * Feito com Views simples, sem Compose, porque a janela fica fora da Activity. Arraste para mudar de
- * lugar; toque para voltar ao Rota.OBD. Precisa da permissão "sobrepor a outros apps".
+ * lugar; toque para voltar ao Rota.OBD; ✕ fecha até a próxima conexão. Precisa da permissão "sobrepor a outros apps".
  */
 class FloatingPanel(
     private val context: Context,
     private val onMoved: (x: Int, y: Int) -> Unit,
     private val onTap: () -> Unit,
+    private val onClose: () -> Unit,
 ) {
     private val wm = context.getSystemService(WindowManager::class.java)
     private var root: LinearLayout? = null
@@ -60,7 +61,25 @@ class FloatingPanel(
             typeface = mono
             setTextColor(0xFFA9AEB2.toInt())
         }
-        box.addView(status)
+        // ✕ com área de toque folgada (o carro balança): fecha o painel até a próxima conexão.
+        val close = TextView(context).apply {
+            text = "✕"
+            textSize = 18f
+            setTextColor(0xFFA9AEB2.toInt())
+            gravity = Gravity.CENTER
+            minWidth = dp(44)
+            minHeight = dp(36)
+            setPadding(dp(12), 0, 0, 0)
+            contentDescription = "Fechar o painel"
+            setOnClickListener { onClose() }
+        }
+        val header = LinearLayout(context).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            addView(status, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
+            addView(close, LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT))
+        }
+        box.addView(header)
         val lp = WindowManager.LayoutParams(
             WindowManager.LayoutParams.WRAP_CONTENT,
             WindowManager.LayoutParams.WRAP_CONTENT,
