@@ -221,7 +221,8 @@ private fun BusyStrip(vm: ObdViewModel, tab: Tab) {
     val busy by vm.busy.collectAsState()
     val b = busy ?: return
     val owned = (tab == Tab.LIVE && b == "Ao vivo") || (tab == Tab.DISCOVERY && b == "Descoberta") ||
-        (tab == Tab.LID && b.startsWith("Explorar 21")) || (tab == Tab.GUIDED && b.startsWith(ObdViewModel.LABEL_GUIDED))
+        (tab == Tab.LID && b.startsWith("Explorar 21")) || (tab == Tab.GUIDED && b.startsWith(ObdViewModel.LABEL_GUIDED)) ||
+        (tab == Tab.LIVE && b.startsWith(ObdViewModel.LABEL_GUIDED))
     if (owned) return
     Row(
         Modifier.fillMaxWidth().padding(bottom = 12.dp)
