@@ -43,6 +43,8 @@ import co.rotalabs.obd.core.Modules
 import co.rotalabs.obd.core.NdjsonRecorder
 import co.rotalabs.obd.core.ObservingRecorder
 import co.rotalabs.obd.core.PanelItems
+import co.rotalabs.obd.core.PerfilMitsubishi
+import co.rotalabs.obd.core.Formato
 import co.rotalabs.obd.core.ObdPids
 import co.rotalabs.obd.core.ObdResult
 import co.rotalabs.obd.core.SimulatedLink
@@ -74,7 +76,15 @@ sealed class ConnState {
 }
 
 /** Uma leitura ao vivo. Sem valor, [status] diz por quê (sem dados, tempo esgotado...): nunca vira zero. */
-data class LiveValue(val pid: Int, val name: String, val unit: String, val value: Double?, val status: String? = null)
+data class LiveValue(
+    val pid: Int,
+    val name: String,
+    val unit: String,
+    val value: Double?,
+    val status: String? = null,
+    /** Valor em texto quando não é número (ex.: marcha "3ª", "P"). */
+    val text: String? = null,
+)
 
 data class LidWatch(
     val module: Module,
@@ -188,6 +198,22 @@ class ObdViewModel(app: Application) : AndroidViewModel(app) {
     // ---------- Painel flutuante ----------
 
     private val _pidReadings = MutableStateFlow<Map<Int, PanelItems.Reading>>(emptyMap())
+    /** Últimas respostas do câmbio (21 08 e 21 02) com a hora, para o perfil da Pajero. */
+    private val _transmission = MutableStateFlow<Map<String, Pair<IntArray, Long>>>(emptyMap())
+
+    private fun profileActive(): Boolean = PerfilMitsubishi.active(_garage.value.vehicle.calibration)
+
+    /** Resposta do câmbio se tiver menos de 60 s. */
+    private fun transmission(req: String): IntArray? =
+        _transmission.value[req]?.takeIf { System.currentTimeMillis() - it.second <= 60_000 }?.first
+
+    /** Valores do perfil para o Ao vivo e o painel: temperatura do fluido e marcha. */
+    private fun profileValue(id: Int): Pair<Double?, String?> = when (id) {
+        PerfilMitsubishi.ATF -> PerfilMitsubishi.atf(transmission(PerfilMitsubishi.REQ_2108)) to null
+        PerfilMitsubishi.GEAR -> null to PerfilMitsubishi.gearText(transmission(PerfilMitsubishi.REQ_2108), transmission(PerfilMitsubishi.REQ_2102))
+        else -> null to null
+    }
+
     private val trip = FuelEstimate.Trip()
     private val _tripAverage = MutableStateFlow<Double?>(null)
     val tripAverage: StateFlow<Double?> = _tripAverage
@@ -237,12 +263,21 @@ class ObdViewModel(app: Application) : AndroidViewModel(app) {
 
     /** Guarda o último valor de cada PID do motor, lido pelo Ao vivo ou pela Coleta guiada. */
     private fun observeReading(kind: String, fields: Map<String, Any?>) {
+        // Câmbio da Pajero (serviço 21): guarda a última resposta do 21 08 e do 21 02, venha de onde vier.
+        if ((kind == "lid_watch" || kind == "lid_sweep") && fields["mod"] == Modules.TRANSMISSION.id && fields["status"] == "ok") {
+            val req = fields["req"] as? String
+            if (req == PerfilMitsubishi.REQ_2108 || req == PerfilMitsubishi.REQ_2102) {
+                PerfilMitsubishi.hex(fields["resp"] as? String)?.let { _transmission.value = _transmission.value + (req to (it to System.currentTimeMillis())) }
+            }
+            return
+        }
         if (kind != "pid" || fields["mod"] != Modules.ENGINE.id) return
         val pid = (fields["req"] as? String)?.takeIf { it.length == 4 }?.substring(2)?.toIntOrNull(16) ?: return
         val value = fields["value"] as? Double ?: return
         val now = System.currentTimeMillis()
         val readings = _pidReadings.value + (pid to PanelItems.Reading(value, now))
         _pidReadings.value = readings
+        // (o resto da função trata os PIDs do motor)
         // A cada rotação lida, soma o consumo estimado da viagem com a carga e a velocidade mais recentes.
         if (pid == 0x0C) {
             val load = readings[0x04]?.takeIf { now - it.atMillis <= 10_000 }?.value
@@ -282,7 +317,11 @@ class ObdViewModel(app: Application) : AndroidViewModel(app) {
                     else -> "● Conectado · sem leitura"
                 }
                 val readings = if (live.busy == null) emptyMap() else live.readings
-                panel.update(status, recording, PanelItems.lines(items, readings, live.volts, System.currentTimeMillis(), _tripAverage.value))
+                val profile = PerfilMitsubishi.ids.filter { it in items }.associateWith { id ->
+                    val (v, t) = profileValue(id)
+                    t ?: v?.let { Formato.leitura(it, PerfilMitsubishi.unit(id)) + " " + PerfilMitsubishi.unit(id) } ?: "—"
+                }
+                panel.update(status, recording, PanelItems.lines(items, readings, live.volts, System.currentTimeMillis(), _tripAverage.value, profile))
             }
         }
     }
@@ -756,7 +795,14 @@ class ObdViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     private fun setLiveAvailable(supported: List<Int>) {
-        val available = LiveSelection.available(supported)
+        val available = LiveSelection.order(LiveSelection.available(supported) + (if (profileActive()) PerfilMitsubishi.ids else emptyList()))
+        // Na primeira vez que o perfil da Pajero aparece, marca câmbio e marcha mesmo em quem já tinha escolhido os dados.
+        if (profileActive() && !prefs.getBoolean(KEY_PROFILE_OFFERED, false)) {
+            LiveSelection.decode(prefs.getString(KEY_LIVE_SELECTION, null))?.let { saved ->
+                prefs.edit().putString(KEY_LIVE_SELECTION, LiveSelection.encode(saved + PerfilMitsubishi.ids)).apply()
+            }
+            prefs.edit().putBoolean(KEY_PROFILE_OFFERED, true).apply()
+        }
         _liveAvailable.value = available
         prefs.edit().putString(KEY_LIVE_AVAILABLE, LiveSelection.encode(available)).apply()
         _liveSelection.value = LiveSelection.effective(LiveSelection.decode(prefs.getString(KEY_LIVE_SELECTION, null)), available)
@@ -789,6 +835,9 @@ class ObdViewModel(app: Application) : AndroidViewModel(app) {
                     }
                     val missing = d.needs.firstOrNull { raw[it]?.second == null }
                     LiveValue(id, d.name, unit, value, if (value == null && missing != null) status(raw[missing]?.first, null) else null)
+                } else if (id in PerfilMitsubishi.ids) {
+                    val (value, text) = profileValue(id)
+                    LiveValue(id, LiveSelection.name(id), LiveSelection.unit(id), value, text = text)
                 } else {
                     val (r, v) = raw[id] ?: (null to null)
                     LiveValue(id, LiveSelection.name(id), LiveSelection.unit(id), LiveSelection.shown(id, v), status(r, v))
@@ -812,6 +861,14 @@ class ObdViewModel(app: Application) : AndroidViewModel(app) {
                     val stored = _garage.value.lastFuelLevelPct
                     if (stored == null || kotlin.math.abs(v - stored) >= 1.0) recordFuelLevel(v)
                 }
+                publish(_liveSelection.value)
+            }
+            // Câmbio da Pajero: a cada 3 voltas lê o 21 08 (fluido, alavanca) e o 21 02 (marcha), se estiverem
+            // no Ao vivo ou no painel. Trocar de módulo custa dois comandos, por isso não vai a cada volta.
+            val wantProfile = (selected + (if (_panelEnabled.value) _panelItems.value else emptyList())).any { it in PerfilMitsubishi.ids }
+            if (wantProfile && profileActive() && round % 3 == 0) {
+                e.request(Modules.TRANSMISSION, PerfilMitsubishi.REQ_2108, 1000, kind = "lid_watch")
+                e.request(Modules.TRANSMISSION, PerfilMitsubishi.REQ_2102, 1000, kind = "lid_watch")
                 publish(_liveSelection.value)
             }
             if (reads.isEmpty()) delay(500)
@@ -1066,6 +1123,7 @@ class ObdViewModel(app: Application) : AndroidViewModel(app) {
         const val LABEL_GUIDED = "Coleta guiada"
         private const val KEY_PANEL = "painel_flutuante"
         private const val KEY_KNOWN_LIDS = "lids_conhecidos"
+        private const val KEY_PROFILE_OFFERED = "perfil_mitsubishi_oferecido"
         private const val KEY_PANEL_ITEMS = "painel_flutuante_itens"
         private const val KEY_PANEL_X = "painel_flutuante_x"
         private const val KEY_PANEL_Y = "painel_flutuante_y"

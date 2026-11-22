@@ -3,6 +3,7 @@ package co.rotalabs.obd.ui
 import android.Manifest
 import android.content.Intent
 import co.rotalabs.obd.core.PanelItems
+import co.rotalabs.obd.core.PerfilMitsubishi
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Switch
@@ -417,14 +418,15 @@ private fun LiveTile(v: LiveValue, modifier: Modifier, hero: Boolean = false) {
     val level = LiveMetrics.level(v.pid, v.value)
     val limit = LiveMetrics.limits[v.pid]
     val caption = when {
-        v.value == null -> v.status?.let { if (it.startsWith("não")) "Resposta $it" else "Sem resposta · $it" } ?: "Aguardando leitura"
+        v.value == null && v.text == null -> v.status?.let { if (it.startsWith("não")) "Resposta $it" else "Sem resposta · $it" } ?: "Aguardando leitura"
         level == LiveMetrics.Level.DANGER && limit != null -> "Acima de ${Formato.leitura(limit.second, v.unit)} ${v.unit}"
         level == LiveMetrics.Level.WARNING && limit != null -> "Acima de ${Formato.leitura(limit.first, v.unit)} ${v.unit}"
-        else -> LiveSelection.derived[v.pid]?.note ?: "PID %02X".format(v.pid)
+        v.text == null && v.value == null -> "Aguardando leitura"
+        else -> LiveSelection.derived[v.pid]?.note ?: PerfilMitsubishi.note(v.pid) ?: "PID %02X".format(v.pid)
     }
     MetricTile(
         label = v.name,
-        value = v.value?.let { Formato.leitura(it, v.unit) },
+        value = v.text ?: v.value?.let { Formato.leitura(it, v.unit) },
         unit = v.unit,
         modifier = modifier,
         caption = caption,

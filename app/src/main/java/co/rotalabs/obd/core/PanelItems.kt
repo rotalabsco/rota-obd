@@ -19,6 +19,7 @@ object PanelItems {
     /** Rótulos curtos, porque o painel é pequeno; o resto usa o nome do Ao vivo. */
     private val shortLabels = mapOf(
         0x05 to "Motor", 0x0C to "Rotação", 0x0D to "Velocidade", 0x04 to "Carga",
+        PerfilMitsubishi.ATF to "Câmbio", PerfilMitsubishi.GEAR to "Marcha",
         LiveSelection.BOOST to "Turbo", LiveSelection.CONSUMPTION to "Consumo", LiveSelection.TRIP_AVG to "Média", 0x23 to "Rail", 0x0F to "Ar admissão", 0x0B to "Coletor",
         0x33 to "Barométrica", 0x42 to "Módulo", 0x49 to "Pedal", 0x2C to "EGR", 0x2D to "Erro EGR",
         0x10 to "Fluxo de ar", 0x11 to "Borboleta", 0x4C to "Borboleta cmd.", 0x5C to "Óleo",
@@ -62,9 +63,12 @@ object PanelItems {
         voltage: Double?,
         nowMillis: Long,
         tripAverage: Double? = null,
+        /** Valores já formatados do perfil do serviço 21 (câmbio da Pajero). */
+        profile: Map<Int, String> = emptyMap(),
     ): List<Pair<String, String>> {
         fun fresh(pid: Int) = readings[pid]?.takeIf { nowMillis - it.atMillis <= STALE_MS }?.value
         return selected.map { id ->
+            profile[id]?.let { return@map label(id) to it }
             val (v, u) = when (id) {
                 VOLTAGE -> voltage to unit(id)
                 LiveSelection.BOOST -> LiveSelection.boostBar(fresh(0x0B), fresh(0x33)) to unit(id)

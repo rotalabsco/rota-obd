@@ -95,7 +95,7 @@ object GuidedCollection {
                 "(aparece uma notificação do Rota.OBD). Ninguém precisa mexer na central. " +
                 "Para sozinho quando o motor fica desligado por 2 minutos; depois de uma parada, toque em Começar de novo.",
             Action.Watch(
-                listOf(lid(T, 0x05), lid(T, 0x08), lid(E, 0x01), lid(E, 0x02), RPM, SPEED, COOLANT, LOAD),
+                listOf(lid(T, 0x08), lid(T, 0x02), lid(E, 0x01), lid(E, 0x02), RPM, SPEED, COOLANT, LOAD),
                 null,
                 listOf(Cue(0, "Pode dirigir. Não precisa mexer em nada")),
                 rotateKnown = 8,

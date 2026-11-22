@@ -72,6 +72,8 @@ object LiveMetrics {
     val limits: Map<Int, Pair<Double, Double>> = mapOf(
         PID_COOLANT to (105.0 to 112.0),
         PID_OIL to (120.0 to 130.0),
+        // Fluido do câmbio automático: acima de ~100 °C já pede atenção (reboque, serra, trânsito); 115 °C é sério.
+        PerfilMitsubishi.ATF to (100.0 to 115.0),
     )
 
     private const val MIN_SPEED_KMH = 5.0

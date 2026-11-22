@@ -64,6 +64,30 @@ Só PIDs padrão: a gravação da viagem com o serviço 21 ainda não existia ne
 O Car Scanner mostrava o volume injetado em litros: vem de um identificador do serviço 21 (perfil Mitsubishi). Achar esse
 byte é o próximo passo, com a gravação da viagem, que agora lê em rodízio todos os LIDs que responderam.
 
+## Coleta de 22/11/2026 (gravação da viagem, 11 min, 6,9 km, versão 0.1.20)
+
+Os 115 LIDs que respondem foram lidos ~40 vezes cada; os fixos, 546. O motor foi de 64 a 88 °C. Cruzando cada
+byte com rotação, velocidade, carga e temperatura do motor (correlação), e com a troca P-R-N-D cronometrada:
+
+| Módulo | LID | Byte de dados | Significado | Confiança |
+|---|---|---|---|---|
+| Câmbio | `2108` | 4 | **temperatura do fluido**, °C = valor − 40. A frio bateu com a ambiente (29 °C); na coleta: 38 °C (07:42), 46 °C (09:13), 47 → 58 °C na viagem, 59 °C na chegada | alta |
+| Câmbio | `2102` | 6 | a mesma temperatura do fluido, com − 50 | alta |
+| Câmbio | `2108` | 2 | **alavanca**: E0 = P, 00 = R, 20 = N, 40 = D (bits altos); 0x10 no byte 0 durante a troca | alta |
+| Câmbio | `2102` | 9 | **marcha engatada**, um bit por marcha: 04 = 1ª, 08 = 2ª, 10 = 3ª, 20 = 4ª, 40 = 5ª (rpm/km/h ≈ 63, 45, 31, 22) | alta |
+| Câmbio | `2105` | 5 | temperatura do **motor** que o câmbio recebe (− 40); **não** é o fluido | alta |
+| Câmbio | `2108` | 6 | 0x15 em P/N, 0x00 com marcha engatada (R/D) | média |
+| Motor | `2102` | 1 | temperatura do motor (− 40), igual ao PID 05 | alta |
+| Motor | `2101` | 1 | velocidade em km/h | alta |
+| Motor | `2144` | 0–1 | velocidade (× ~128) | alta |
+| Motor | `2158` | 4 | acompanha a carga (r = 0,98) e vai a 0 no corte de injeção: candidato a volume injetado (≈ 2 × carga) | média |
+| Motor | `2151` | 0 | acompanha a carga (r = 0,99): outro candidato | média |
+| Motor | `2115` | 1–2 | contador que subiu 7 em 6,9 km; entre a manhã de 21/11 e 22/11 subiu ~179 km: provável hodômetro em km | média (falta comparar com o painel) |
+| Motor | `211A` 1–2, `2103` 2–3 | | outros contadores que sobem 1 por km | média |
+
+O que foi para o app (perfil `core/PerfilMitsubishi.kt`, só para a calibração 1860C02202): temperatura do fluido do
+câmbio (alerta a 100 °C, sério a 115 °C) e marcha engatada, no Ao vivo, no painel e na gravação da viagem.
+
 ## Plano de teste no carro
 
 1. Fechar o Car Scanner. Ignição ligada, abrir o app, conectar ao Vgate.

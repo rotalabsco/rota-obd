@@ -71,7 +71,13 @@ class SimulatedLink(private val chunkSize: Int = 20, private val latencyMs: Long
     }
 
     private fun service21(lid: Int, engine: Boolean, rpm: Int): String {
-        val supported = if (engine) setOf(0x01, 0x02, 0x03, 0x10, 0x11) else setOf(0x01, 0x30)
+        // Câmbio como o da Pajero: 21 08 (alavanca em D, fluido a ~62 °C) e 21 02 (marcha pela rotação).
+        if (!engine && lid == 0x08) return multi("6108" + "000040%02X%02X001540".format(0x24, 102))
+        if (!engine && lid == 0x02) {
+            val gear = when { rpm < 1000 -> 0x84; rpm < 1300 -> 0x90; rpm < 1600 -> 0xA0; else -> 0xC0 }
+            return multi("6102" + "FF04FA0000746D00FF%02X".format(gear))
+        }
+        val supported = if (engine) setOf(0x01, 0x02, 0x03, 0x10, 0x11) else setOf(0x01, 0x02, 0x08, 0x30)
         if (lid !in supported) return fmt("7F2131")
         // Bytes 0..1: rotação; byte 2: volume injetado (mm³/ciclo ×4); demais fixos.
         val inj = ((rpm - 700) / 20 + 8).coerceIn(0, 255)

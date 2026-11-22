@@ -28,11 +28,12 @@ object LiveSelection {
      * velocidade, rotação e turbo primeiro; depois o que serve de alerta.
      */
     private val preferredOrder = listOf(
-        0x0D, 0x0C, BOOST, CONSUMPTION, TRIP_AVG, 0x5E, 0x05, 0x23, 0x5C, 0x0F, 0x04, 0x42, 0x49, 0x2C, 0x2F,
+        0x0D, 0x0C, BOOST, CONSUMPTION, TRIP_AVG, 0x5E, 0x05, PerfilMitsubishi.ATF, PerfilMitsubishi.GEAR, 0x23, 0x5C, 0x0F, 0x04, 0x42, 0x49, 0x2C, 0x2F,
     )
 
-    fun name(id: Int): String = derived[id]?.name ?: ObdPids.defs[id]?.name ?: "PID %02X".format(id)
-    fun unit(id: Int): String = derived[id]?.unit ?: ObdPids.defs[id]?.unit?.let { if (it == "kPa") "bar" else it } ?: ""
+    fun name(id: Int): String = derived[id]?.name ?: PerfilMitsubishi.name(id) ?: ObdPids.defs[id]?.name ?: "PID %02X".format(id)
+    fun unit(id: Int): String = derived[id]?.unit ?: (if (id in PerfilMitsubishi.ids) PerfilMitsubishi.unit(id) else null)
+        ?: ObdPids.defs[id]?.unit?.let { if (it == "kPa") "bar" else it } ?: ""
 
     /** Pressões aparecem em bar (1 bar = 100 kPa); o arquivo da sessão guarda kPa, como o OBD manda. */
     fun shown(id: Int, value: Double?): Double? =
@@ -57,7 +58,8 @@ object LiveSelection {
 
     /** PIDs a pedir ao motor para mostrar a seleção. */
     fun pidsToRead(selected: List<Int>): List<Int> =
-        selected.flatMap { derived[it]?.needs ?: listOf(it) }.distinct()
+        // Ids do perfil do serviço 21 (0x110+) não são PIDs do modo 01.
+        selected.flatMap { derived[it]?.needs ?: if (it < 0x100) listOf(it) else emptyList() }.distinct()
 
     /** Pressão do turbo em bar (relativa à atmosfera). */
     fun boostBar(mapKpa: Double?, baroKpa: Double?): Double? =
