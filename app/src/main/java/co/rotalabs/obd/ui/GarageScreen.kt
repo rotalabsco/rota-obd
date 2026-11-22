@@ -87,7 +87,8 @@ fun GarageScreen(vm: ObdViewModel) {
             odo?.let {
                 Column(horizontalAlignment = Alignment.End) {
                     Text("${num(it, 0)} km", style = RlType.metric, fontSize = 24.sp, color = Rl.text)
-                    Text("hodômetro estimado", style = MaterialTheme.typography.bodySmall, color = Rl.text3)
+                    val fromEcu = v.dashboardOdometerKm != null && it == v.dashboardOdometerKm
+                    Text(if (fromEcu) "hodômetro, pela central" else "hodômetro estimado", style = MaterialTheme.typography.bodySmall, color = Rl.text3)
                 }
             }
             PrimaryButton("Abastecimento", { creating = true }, icon = RlIcons.fuel)
@@ -117,6 +118,7 @@ private fun VehicleForm(v: Vehicle, onSave: (Vehicle) -> Unit) {
     var fuel by remember(v) { mutableStateOf(v.fuel) }
     var tank by remember(v) { mutableStateOf(v.tankLiters?.let { num(it, 0) } ?: "") }
     var odo by remember(v) { mutableStateOf(v.initialOdometerKm?.let { num(it, 0) } ?: "") }
+    var dash by remember(v) { mutableStateOf(v.dashboardOdometerKm?.let { num(it, 0) } ?: "") }
     var vin by remember(v) { mutableStateOf(v.vin) }
     var cal by remember(v) { mutableStateOf(v.calibration) }
     Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -128,6 +130,20 @@ private fun VehicleForm(v: Vehicle, onSave: (Vehicle) -> Unit) {
             OutlinedTextField(fuel, { fuel = it }, label = { Text("Combustível") }, modifier = Modifier.weight(1f))
             NumberField(tank, { tank = it }, "Tanque (L)", Modifier.weight(1f))
             NumberField(odo, { odo = it }, "Hodômetro inicial (km)", Modifier.weight(1f))
+        }
+        v.ecuOdometerKm?.let { ecu ->
+            // Pajero: a central conta os km rodados, mas o número não é o do painel. Com a diferença, anda sozinho.
+            NumberField(dash, { dash = it }, "Hodômetro do painel agora (km)", Modifier.fillMaxWidth())
+            Text(
+                if (v.odometerOffsetKm == null) {
+                    "A central do motor conta ${num(ecu, 0)} km, que não é o número do painel. Digite uma vez o que o " +
+                        "painel mostra, com o carro parado desde a última conexão, e o hodômetro passa a andar sozinho."
+                } else {
+                    "O hodômetro anda sozinho com a central do motor (${num(ecu, 0)} km na última leitura). " +
+                        "Se ficar diferente do painel, digite o número do painel de novo."
+                },
+                style = MaterialTheme.typography.bodySmall,
+            )
         }
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             OutlinedTextField(vin, { vin = it.uppercase() }, label = { Text("Chassi (VIN)") }, modifier = Modifier.weight(1f))
@@ -142,6 +158,7 @@ private fun VehicleForm(v: Vehicle, onSave: (Vehicle) -> Unit) {
                 v.copy(
                     name = name.ifBlank { "Meu carro" }, plate = plate.trim(), fuel = fuel.trim(),
                     tankLiters = parseNumber(tank), initialOdometerKm = parseNumber(odo),
+                    odometerOffsetKm = v.ecuOdometerKm?.let { ecu -> parseNumber(dash)?.minus(ecu) },
                     vin = vin.trim(), calibration = cal.trim(),
                 ),
             )

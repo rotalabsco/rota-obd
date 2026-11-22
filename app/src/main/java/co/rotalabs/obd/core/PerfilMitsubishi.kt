@@ -12,8 +12,13 @@ package co.rotalabs.obd.core
  * - 2102, byte de dados 9: marcha engatada, um bit por marcha: 04 = 1ª, 08 = 2ª, 10 = 3ª, 20 = 4ª, 40 = 5ª.
  *
  * Motor (7E0):
- * - 2103, bytes de dados 1–3: provável hodômetro em km (subiu 7 em 6,9 km; marcava 234.143). A confirmar
- *   com o painel do carro.
+ * - 2103, bytes de dados 1–3: contador de km. Acompanha a distância (13 km e 17 km nas viagens de 22/11, contra
+ *   13,4 e 17,9 km somando a velocidade), mas fica 1.541 km abaixo do painel (234.174 contra 235.715). Por isso
+ *   o dono informa o painel uma vez na Garagem e o app guarda a diferença.
+ * - 2108, bytes de dados 0 e 1: pedal do acelerador, os dois sensores (0 com o pé solto, iguais entre si).
+ * - 214A, byte de dados 0: volume injetado, provavelmente em 0,5 mm³ (≈ 2,39 × carga; 16–20 em marcha lenta,
+ *   ou 8–10 mm³). Confirma a referência do consumo: 2,39 / 2 × 100 ≈ 120 mm³ a 100% de carga, contra os 122 do
+ *   [FuelEstimate] calibrados pelo Car Scanner. A carga (PID 04) já basta para o consumo.
  */
 object PerfilMitsubishi {
     val engineCalibrations = setOf("1860C02202")
@@ -36,7 +41,7 @@ object PerfilMitsubishi {
     fun name(id: Int): String? = when (id) {
         ATF -> "Temp. do fluido do câmbio"
         GEAR -> "Marcha"
-        ODO -> "Hodômetro (módulo do motor)"
+        ODO -> "Hodômetro"
         else -> null
     }
 
@@ -49,7 +54,7 @@ object PerfilMitsubishi {
     fun note(id: Int): String? = when (id) {
         ATF -> "câmbio · serviço 21 (21 08)"
         GEAR -> "câmbio · serviço 21 (21 02 e 21 08)"
-        ODO -> "motor · serviço 21 (21 03) · confira com o painel"
+        ODO -> "motor · serviço 21 (21 03) · informe o painel uma vez na Garagem"
         else -> null
     }
 
