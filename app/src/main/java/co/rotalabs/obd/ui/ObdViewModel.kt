@@ -59,6 +59,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.sample
+import kotlinx.coroutines.flow.updateAndGet
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import java.io.File
@@ -215,7 +216,9 @@ class ObdViewModel(app: Application) : AndroidViewModel(app) {
     private fun profileValue(id: Int): Pair<Double?, String?> = when (id) {
         PerfilMitsubishi.ATF -> PerfilMitsubishi.atf(transmission(PerfilMitsubishi.REQ_2108)) to null
         PerfilMitsubishi.GEAR -> null to PerfilMitsubishi.gearText(transmission(PerfilMitsubishi.REQ_2108), transmission(PerfilMitsubishi.REQ_2102))
-        PerfilMitsubishi.ODO -> _transmission.value[PerfilMitsubishi.REQ_2103]?.first.let { PerfilMitsubishi.odometer(it) } to null
+        // Com a diferença para o painel informada na Garagem, mostra o mesmo número do painel.
+        PerfilMitsubishi.ODO -> _transmission.value[PerfilMitsubishi.REQ_2103]?.first.let { PerfilMitsubishi.odometer(it) }
+            ?.let { it + (_garage.value.vehicle.odometerOffsetKm ?: 0.0) } to null
         else -> null to null
     }
 
@@ -287,6 +290,7 @@ class ObdViewModel(app: Application) : AndroidViewModel(app) {
                 (mod == Modules.ENGINE.id && req == PerfilMitsubishi.REQ_2103)
             if (req != null && wanted) {
                 PerfilMitsubishi.hex(fields["resp"] as? String)?.let { _transmission.value = _transmission.value + (req to (it to System.currentTimeMillis())) }
+                if (req == PerfilMitsubishi.REQ_2103) rememberEcuOdometer()
             }
             return
         }
@@ -1119,12 +1123,13 @@ class ObdViewModel(app: Application) : AndroidViewModel(app) {
     // ---------- Garagem ----------
 
     private fun updateGarage(change: (GarageData) -> GarageData) {
-        val next = change(_garage.value)
-        _garage.value = next
+        // Atômico: a leitura do carro (contador de km, nível do tanque) também altera a Garagem, fora da tela.
+        val next = _garage.updateAndGet(change)
         viewModelScope.launch(Dispatchers.IO) { garageStore.save(next) }
     }
 
-    fun updateVehicle(v: Vehicle) = updateGarage { it.copy(vehicle = v) }
+    /** Salva o formulário do carro sem desfazer o contador da central lido enquanto ele estava aberto. */
+    fun updateVehicle(v: Vehicle) = updateGarage { it.copy(vehicle = v.copy(ecuOdometerKm = it.vehicle.ecuOdometerKm)) }
     fun saveFuel(e: FuelEntry) = updateGarage { d -> d.copy(fuel = d.fuel.filterNot { it.id == e.id } + e) }
     fun deleteFuel(id: String) = updateGarage { d -> d.copy(fuel = d.fuel.filterNot { it.id == id }) }
     fun saveItem(i: MaintenanceItem) = updateGarage { d ->
@@ -1163,8 +1168,18 @@ class ObdViewModel(app: Application) : AndroidViewModel(app) {
             updateGarage { it.copy(vehicle = it.vehicle.copy(vin = vin, calibration = cal)) }
             log("Carro identificado: chassi $vin, calibração $cal")
         }
+        // Pajero: lê o contador de km da central a cada conexão, para o hodômetro da Garagem andar sozinho.
+        if (PerfilMitsubishi.active(cal)) e.request(Modules.ENGINE, PerfilMitsubishi.REQ_2103, 1000, kind = "lid_watch")
         val (_, level) = e.readPid(Modules.ENGINE, FUEL_LEVEL_PID)
         if (level != null) recordFuelLevel(level) else log("A ECU não informa o nível do tanque (PID 2F)")
+    }
+
+    /** Guarda o contador de km da central na Garagem (grava o arquivo só quando muda, ~1 vez por km). */
+    private fun rememberEcuOdometer() {
+        if (!profileActive()) return
+        val km = PerfilMitsubishi.odometer(_transmission.value[PerfilMitsubishi.REQ_2103]?.first) ?: return
+        if (km == _garage.value.vehicle.ecuOdometerKm) return
+        updateGarage { it.copy(vehicle = it.vehicle.copy(ecuOdometerKm = km)) }
     }
 
     private fun recordFuelLevel(level: Double) {

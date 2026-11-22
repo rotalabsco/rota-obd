@@ -14,7 +14,18 @@ data class Vehicle(
     val fuel: String = "Diesel",
     val tankLiters: Double? = null,
     val initialOdometerKm: Double? = null,
-)
+    /**
+     * Último valor do contador de km da central do motor (só em carros com perfil, como a Pajero). Ele
+     * acompanha a distância rodada, mas não bate com o painel: na Pajero ficou 1.541 km abaixo.
+     */
+    val ecuOdometerKm: Double? = null,
+    /** Painel − contador da central, informado uma vez pelo dono. Com ele o hodômetro anda sozinho. */
+    val odometerOffsetKm: Double? = null,
+) {
+    /** Hodômetro do painel calculado pela central: contador + diferença. Null sem os dois. */
+    val dashboardOdometerKm: Double?
+        get() = if (ecuOdometerKm != null && odometerOffsetKm != null) ecuOdometerKm + odometerOffsetKm else null
+}
 
 data class FuelEntry(
     val id: String = newId(),
@@ -109,6 +120,7 @@ object Garage {
 
     fun currentOdometer(d: GarageData): Double? = listOfNotNull(
         d.vehicle.initialOdometerKm,
+        d.vehicle.dashboardOdometerKm,
         d.fuel.maxOfOrNull { it.odometerKm },
         d.records.mapNotNull { it.odometerKm }.maxOrNull(),
     ).maxOrNull()
@@ -200,6 +212,7 @@ object Garage {
                 mapOf(
                     "name" to name, "vin" to vin, "calibration" to calibration, "plate" to plate, "fuel" to fuel,
                     "tankLiters" to tankLiters, "initialOdometerKm" to initialOdometerKm,
+                    "ecuOdometerKm" to ecuOdometerKm, "odometerOffsetKm" to odometerOffsetKm,
                 )
             },
             "fuel" to d.fuel.map {
@@ -238,6 +251,7 @@ object Garage {
                 name = v.s("name").ifEmpty { "Meu carro" }, vin = v.s("vin"), calibration = v.s("calibration"),
                 plate = v.s("plate"), fuel = v.s("fuel").ifEmpty { "Diesel" },
                 tankLiters = v.d("tankLiters"), initialOdometerKm = v.d("initialOdometerKm"),
+                ecuOdometerKm = v.d("ecuOdometerKm"), odometerOffsetKm = v.d("odometerOffsetKm"),
             ),
             fuel = list("fuel").map {
                 FuelEntry(

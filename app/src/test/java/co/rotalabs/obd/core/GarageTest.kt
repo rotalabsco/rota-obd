@@ -74,6 +74,20 @@ class GarageTest {
     }
 
     @Test
+    fun odometerFromEcuCounterAndDashboardOffset() {
+        // Pajero em 22/11/2026: central 234.174 km, painel 235.715 km.
+        val noOffset = GarageData(vehicle = Vehicle(initialOdometerKm = 230_000.0, ecuOdometerKm = 234_174.0))
+        assertEquals(null, noOffset.vehicle.dashboardOdometerKm)
+        assertEquals(230_000.0, Garage.currentOdometer(noOffset)!!, 1e-9)
+
+        val withOffset = noOffset.copy(vehicle = noOffset.vehicle.copy(odometerOffsetKm = 1_541.0))
+        assertEquals(235_715.0, Garage.currentOdometer(withOffset)!!, 1e-9)
+        val later = withOffset.copy(vehicle = withOffset.vehicle.copy(ecuOdometerKm = 234_200.0))
+        assertEquals(235_741.0, Garage.currentOdometer(later)!!, 1e-9)
+        assertEquals(later.vehicle, Garage.fromJson(Garage.toJson(later)).vehicle)
+    }
+
+    @Test
     fun parsesBrazilianNumbers() {
         assertEquals(1234.5, Garage.parseNumber("1.234,5")!!, 1e-9)
         assertEquals(10000.0, Garage.parseNumber("10.000")!!, 1e-9)

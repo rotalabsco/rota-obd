@@ -82,11 +82,34 @@ byte com rotação, velocidade, carga e temperatura do motor (correlação), e c
 | Motor | `2144` | 0–1 | velocidade (× ~128) | alta |
 | Motor | `2158` | 4 | acompanha a carga (r = 0,98) e vai a 0 no corte de injeção: candidato a volume injetado (≈ 2 × carga) | média |
 | Motor | `2151` | 0 | acompanha a carga (r = 0,99): outro candidato | média |
-| Motor | `2115` | 1–2 | contador que subiu 7 em 6,9 km; entre a manhã de 21/11 e 22/11 subiu ~179 km: provável hodômetro em km | média (falta comparar com o painel) |
-| Motor | `211A` 1–2, `2103` 2–3 | | outros contadores que sobem 1 por km | média |
+| Motor | `2115` | 1–2 | contador que subiu 7 em 6,9 km; entre a manhã de 21/11 e 22/11 subiu ~179 km | média |
+| Motor | `2103` 1–3, `211A` 1–2 | | contadores que sobem 1 por km; o `2103` é o contador de km da central (veja abaixo) | alta |
 
 O que foi para o app (perfil `core/PerfilMitsubishi.kt`, só para a calibração 1860C02202): temperatura do fluido do
 câmbio (alerta a 100 °C, sério a 115 °C) e marcha engatada, no Ao vivo, no painel e na gravação da viagem.
+
+## Viagem de 22/11/2026 (restaurante, ida e volta, versão 0.1.26)
+
+Gravação automática nas duas pernas: 10:21–10:46 e 12:51–13:22. Painel no fim: **235.715 km**.
+
+| | Ida | Volta |
+|---|---|---|
+| Distância somando a velocidade | 13,4 km | 17,9 km |
+| Contador `7E0 2103` | 234.143 → 234.156 (+13) | 234.157 → 234.174 (+17) |
+| Consumo estimado (carga × rotação, 122 mm³) | 8,4 km/L | 10,8 km/L |
+
+- **`2103` bytes 1–3 é um contador de km**, que acompanha a distância ao km. Só que fica **1.541 km abaixo do
+  painel** (234.174 contra 235.715). Talvez a central ou o painel tenham sido trocados em algum momento. O app guarda
+  a diferença: o dono digita o painel uma vez em Garagem → Carro, e o hodômetro da Garagem passa a andar sozinho.
+- **`214A` byte 0 acompanha o volume injetado**: ≈ 2,39 × carga (r = 0,99, resíduo médio de 1,9). Fica em 16–20 na
+  marcha lenta e vai a 0 no corte de injeção. A unidade provável é 0,5 mm³: dá 8–10 mm³ por curso na lenta e 120 mm³
+  a 100% de carga, quase os 122 mm³ calibrados com o Car Scanner. Isso confirma o modelo de consumo por outra via, e a
+  carga (PID 04) já basta, sem ler mais um LID por volta.
+- **`2108` bytes 0 e 1 são o pedal do acelerador**, os dois sensores: iguais entre si, 0 com o pé solto, 95 com
+  carga de 46%.
+- `2158` byte 4 só sai do 0 com carga acima de ~15%, então não é volume injetado. `2151` byte 0 é ≈ 2 × carga, mas não
+  vai a 0 na lenta como deveria. O candidato é o `214A`.
+- Falta ainda a média do painel numa viagem, para conferir os 122 mm³ contra o computador de bordo.
 
 ## Plano de teste no carro
 
