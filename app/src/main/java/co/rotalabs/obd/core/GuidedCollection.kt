@@ -91,7 +91,8 @@ object GuidedCollection {
         ),
         Step(
             "viagem", GROUP_TRIP, "Gravar a viagem",
-            "Toque em Começar antes de sair e dirija normalmente. Pode abrir o Maps ou a música: a gravação continua em segundo plano " +
+            "Com \"Gravar toda viagem sozinho\" ligado (tela Conexão), começa sozinho quando o motor liga. Senão, toque em Começar " +
+                "antes de sair e dirija normalmente. Pode abrir o Maps ou a música: a gravação continua em segundo plano " +
                 "(aparece uma notificação do Rota.OBD). Ninguém precisa mexer na central. " +
                 "Para sozinho quando o motor fica desligado por 2 minutos; depois de uma parada, toque em Começar de novo.",
             Action.Watch(

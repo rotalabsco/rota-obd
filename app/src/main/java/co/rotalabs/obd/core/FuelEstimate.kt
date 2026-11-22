@@ -42,6 +42,52 @@ object FuelEstimate {
         return kmPerLiter(speedKmh, lph)?.let { it to "km/L" } ?: (lph to "L/h")
     }
 
+    /**
+     * Consumo instantâneo suavizado (média móvel exponencial de ~3 s), para o motorista dosar o pé sem o
+     * número pular a cada leitura. Suaviza litros/hora e velocidade separadamente e divide no fim.
+     */
+    class Smoother(private val tauMs: Double = 3_000.0) {
+        private var lph: Double? = null
+        private var speed: Double? = null
+        private var load: Double? = null
+        private var lastMs: Long? = null
+
+        fun add(loadPct: Double, rpm: Double, speedKmh: Double, nowMs: Long) {
+            val l = litersPerHour(loadPct, rpm)
+            val prev = lastMs
+            lastMs = nowMs
+            val dt = if (prev == null) null else (nowMs - prev).toDouble()
+            if (dt == null || dt <= 0 || dt > MAX_GAP_MS || lph == null) {
+                lph = l; speed = speedKmh; load = loadPct
+                return
+            }
+            val a = dt / (tauMs + dt)
+            lph = lph!! + a * (l - lph!!)
+            speed = speed!! + a * (speedKmh - speed!!)
+            // A carga não é suavizada: o corte de injeção (pé solto) aparece na hora.
+            load = loadPct
+        }
+
+        /** km/L andando ou L/h parado; null antes da primeira leitura. */
+        fun value(): Pair<Double, String>? {
+            val l = lph ?: return null
+            val v = speed ?: return null
+            return kmPerLiter(v, l)?.let { it to "km/L" } ?: (l to "L/h")
+        }
+
+        /** Andando com a injeção cortada (carga 0): o carro não está gastando nada. */
+        fun fuelCut(): Boolean = (load ?: 1.0) <= 0.0 && (speed ?: 0.0) >= MOVING_KMH
+    }
+
+    /** Texto do instantâneo: "∞" no corte de injeção; ▲/▼ comparando com a média da viagem. */
+    fun instantText(value: Pair<Double, String>?, fuelCut: Boolean, average: Double?): String? {
+        if (fuelCut) return "∞ km/L"
+        val (v, u) = value ?: return null
+        val n = Formato.leitura(v, u) + " " + u
+        if (u != "km/L" || average == null) return n
+        return n + if (v >= average) " ▲" else " ▼"
+    }
+
     /** Acumula litros e quilômetros da viagem a cada leitura de rotação. */
     class Trip {
         var liters = 0.0

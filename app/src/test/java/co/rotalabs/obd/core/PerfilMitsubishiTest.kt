@@ -34,6 +34,12 @@ class PerfilMitsubishiTest {
     }
 
     @Test
+    fun hodometro() {
+        assertEquals(234136.0, PerfilMitsubishi.odometer(h("61 03 55 03 92 98"))!!, 0.0)
+        assertNull(PerfilMitsubishi.odometer(h("61 02 2D 80 4C 56 CA")))
+    }
+
+    @Test
     fun soNaCalibracaoDaPajero() {
         assertTrue(PerfilMitsubishi.active("1860C02202"))
         assertFalse(PerfilMitsubishi.active("XYZ"))

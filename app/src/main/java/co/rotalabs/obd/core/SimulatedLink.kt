@@ -111,7 +111,7 @@ class SimulatedLink(private val chunkSize: Int = 20, private val latencyMs: Long
         c == "S0" -> { spaces = false; "OK" }
         c == "S1" -> { spaces = true; "OK" }
         c == "I" -> "ELM327 v2.3 (simulado)"
-        c == "RV" -> "12.6V"
+        c == "RV" -> "14.1V" // motor ligado (alternador carregando)
         c == "DPN" -> "6"
         c == "AR" -> { header = 0x7DF; "OK" }
         c.startsWith("SH") -> { header = c.removePrefix("SH").toInt(16); "OK" }

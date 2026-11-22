@@ -10,6 +10,10 @@ package co.rotalabs.obd.core
  *   mais devagar que o motor). O byte 6 do 2102 é a mesma temperatura com −50.
  * - 2108, byte de dados 2: alavanca. E0 = P, 00 = R, 20 = N, 40 = D (bits altos).
  * - 2102, byte de dados 9: marcha engatada, um bit por marcha: 04 = 1ª, 08 = 2ª, 10 = 3ª, 20 = 4ª, 40 = 5ª.
+ *
+ * Motor (7E0):
+ * - 2103, bytes de dados 1–3: provável hodômetro em km (subiu 7 em 6,9 km; marcava 234.143). A confirmar
+ *   com o painel do carro.
  */
 object PerfilMitsubishi {
     val engineCalibrations = setOf("1860C02202")
@@ -17,26 +21,41 @@ object PerfilMitsubishi {
     /** Ids no Ao vivo e no painel (fora da faixa dos PIDs e dos calculados). */
     const val ATF = 0x110
     const val GEAR = 0x111
-    val ids = listOf(ATF, GEAR)
+    const val ODO = 0x112
+    val ids = listOf(ATF, GEAR, ODO)
+
+    /** Marcados sozinhos no Ao vivo na primeira vez (o hodômetro fica opcional). */
+    val autoSelect = listOf(ATF, GEAR)
 
     const val REQ_2108 = "2108"
     const val REQ_2102 = "2102"
+    const val REQ_2103 = "2103"
 
     fun active(engineCalibration: String?): Boolean = engineCalibration?.trim() in engineCalibrations
 
     fun name(id: Int): String? = when (id) {
         ATF -> "Temp. do fluido do câmbio"
         GEAR -> "Marcha"
+        ODO -> "Hodômetro (módulo do motor)"
         else -> null
     }
 
-    fun unit(id: Int): String = if (id == ATF) "°C" else ""
+    fun unit(id: Int): String = when (id) {
+        ATF -> "°C"
+        ODO -> "km"
+        else -> ""
+    }
 
     fun note(id: Int): String? = when (id) {
         ATF -> "câmbio · serviço 21 (21 08)"
         GEAR -> "câmbio · serviço 21 (21 02 e 21 08)"
+        ODO -> "motor · serviço 21 (21 03) · confira com o painel"
         else -> null
     }
+
+    /** [r2103]: resposta inteira do motor, começando em 61 03. */
+    fun odometer(r2103: IntArray?): Double? =
+        r2103?.takeIf { it.size >= 6 && it[0] == 0x61 && it[1] == 0x03 }?.let { ((it[3] shl 16) or (it[4] shl 8) or it[5]).toDouble() }
 
     /** [r2108]: resposta inteira, começando em 61 08. */
     fun atf(r2108: IntArray?): Double? =

@@ -24,6 +24,25 @@ class FuelEstimateTest {
     }
 
     @Test
+    fun instantaneoSuavizado() {
+        val s = FuelEstimate.Smoother()
+        var now = 0L
+        repeat(20) { s.add(30.0, 1980.0, 90.0, now); now += 500 }
+        assertEquals(10.4, s.value()!!.first, 0.2)
+        // Um pico de 1 leitura não derruba o número de uma vez.
+        s.add(80.0, 1980.0, 90.0, now); now += 500
+        val v = s.value()!!.first
+        assertEquals(true, v > 6.0 && v < 10.4)
+        // Pé solto: carga 0 andando = corte de injeção.
+        s.add(0.0, 1800.0, 80.0, now)
+        assertEquals(true, s.fuelCut())
+        assertEquals("∞ km/L", FuelEstimate.instantText(s.value(), s.fuelCut(), 9.5))
+        assertEquals("12,0 km/L ▲", FuelEstimate.instantText(12.0 to "km/L", false, 9.5))
+        assertEquals("8,0 km/L ▼", FuelEstimate.instantText(8.0 to "km/L", false, 9.5))
+        assertEquals("1,2 L/h", FuelEstimate.instantText(1.24 to "L/h", false, 9.5))
+    }
+
+    @Test
     fun mediaDaViagem() {
         val t = FuelEstimate.Trip()
         var now = 0L

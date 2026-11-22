@@ -357,6 +357,7 @@ private fun LiveScreen(vm: ObdViewModel, goConnect: () -> Unit) {
     var picking by remember { mutableStateOf(false) }
     var panelDialog by remember { mutableStateOf(false) }
     val running = busy == "Ao vivo"
+    val tripRunning = busy?.startsWith(ObdViewModel.LABEL_GUIDED) == true
     val connected = conn is ConnState.Connected
     if (picking) LivePicker(available, selection, vm::setLiveSelected) { picking = false }
     if (panelDialog) {
@@ -369,14 +370,20 @@ private fun LiveScreen(vm: ObdViewModel, goConnect: () -> Unit) {
     }
     Column(Modifier.fillMaxSize(), verticalArrangement = Arrangement.spacedBy(14.dp)) {
         ScreenHeader("Ao vivo · motor 7E0", garage.vehicle.name) {
-            if (connected) Badge(if (running) "Gravando sessão" else "Conectado")
+            if (connected) Badge(if (running) "Gravando sessão" else if (tripRunning) "Gravando viagem" else "Conectado")
             SecondaryButton("Escolher dados", { picking = true }, icon = RlIcons.check)
             SecondaryButton("Painel", { panelDialog = true })
-            if (running) {
+            if (running || tripRunning) {
                 SecondaryButton("Parar", vm::stop, icon = RlIcons.stop)
             } else {
                 PrimaryButton("Começar leitura", vm::startLive, icon = RlIcons.play, enabled = connected && busy == null)
             }
+        }
+        if (tripRunning) {
+            Text(
+                "Gravando a viagem: mostra só o que ela lê. Para ver tudo, pare e toque em Começar leitura.",
+                style = MaterialTheme.typography.bodySmall, color = Rl.text3, maxLines = 1, overflow = TextOverflow.Ellipsis,
+            )
         }
         if (values.isEmpty()) {
             if (!connected) {
@@ -691,6 +698,7 @@ private fun ConnectScreen(vm: ObdViewModel) {
             Column(Modifier.weight(1.6f).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(14.dp)) {
                 AdapterCard(conn, vm::disconnect)
                 PanelCard(vm)
+                AutoTripCard(vm)
                 SleepCard(conn, mode, volts)
             }
             Column(Modifier.weight(1f).fillMaxHeight(), verticalArrangement = Arrangement.spacedBy(10.dp)) {
@@ -738,6 +746,28 @@ private fun ConnectScreen(vm: ObdViewModel) {
                     GhostButton("Procurar atualização", { vm.checkUpdate(manual = true) }, enabled = update !is UpdateState.Checking)
                 }
             }
+        }
+    }
+}
+
+/** Liga ou desliga a gravação automática da viagem quando o motor liga. */
+@Composable
+private fun AutoTripCard(vm: ObdViewModel) {
+    val on by vm.autoTrip.collectAsState()
+    RlCard(Modifier.fillMaxWidth()) {
+        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(14.dp)) {
+            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                Text("Gravar toda viagem sozinho", style = MaterialTheme.typography.titleMedium, color = Rl.text)
+                Text(
+                    "Com o adaptador conectado e o motor ligado, começa a gravação da viagem (a mesma da Coleta) sem tocar " +
+                        "na central. Se você parar ou abrir o Ao vivo, ela volta só na próxima vez que conectar.",
+                    style = MaterialTheme.typography.bodySmall, color = Rl.text3,
+                )
+            }
+            Switch(
+                on, vm::setAutoTrip,
+                colors = SwitchDefaults.colors(checkedTrackColor = Rl.orange, checkedThumbColor = Rl.onAccent, uncheckedTrackColor = Rl.sunken),
+            )
         }
     }
 }
