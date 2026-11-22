@@ -29,7 +29,10 @@ class LiveMetricsTest {
         val pajero = listOf(0x01, 0x04, 0x05, 0x0B, 0x0C, 0x0D, 0x0F, 0x10, 0x11, 0x1C, 0x1F, 0x21, 0x23, 0x2C,
             0x2D, 0x30, 0x31, 0x33, 0x3C, 0x42, 0x45, 0x49, 0x4A, 0x4C, 0x4D, 0x4E)
         val available = LiveSelection.available(pajero)
-        assertEquals(listOf(0x0D, 0x0C, LiveSelection.BOOST, 0x05, 0x23), available.take(5))
+        assertEquals(
+            listOf(0x0D, 0x0C, LiveSelection.BOOST, LiveSelection.CONSUMPTION, LiveSelection.TRIP_AVG, 0x05, 0x23),
+            available.take(7),
+        )
         assertTrue("sem fórmula não aparece", 0x01 !in available && 0x1C !in available)
         // Sem escolha salva: tudo marcado, para a sessão gravar todos os dados.
         assertEquals(available, LiveSelection.effective(null, available))

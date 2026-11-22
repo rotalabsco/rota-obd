@@ -85,7 +85,7 @@ class FloatingPanel(
 
     fun update(statusText: String, recording: Boolean, lines: List<Pair<String, String>>) {
         val box = root ?: return
-        status?.text = statusText
+        status?.setIfChanged(statusText)
         status?.setTextColor(if (recording) 0xFFF28A2E.toInt() else 0xFFA9AEB2.toInt())
         while (rows.size < lines.size) {
             val row = LinearLayout(context).apply {
@@ -110,12 +110,19 @@ class FloatingPanel(
         }
         rows.forEachIndexed { i, (label, value) ->
             val line = lines.getOrNull(i)
-            (label.parent as View).visibility = if (line == null) View.GONE else View.VISIBLE
+            val row = label.parent as View
+            val vis = if (line == null) View.GONE else View.VISIBLE
+            if (row.visibility != vis) row.visibility = vis
             if (line != null) {
-                label.text = line.first
-                value.text = line.second
+                label.setIfChanged(line.first)
+                value.setIfChanged(line.second)
             }
         }
+    }
+
+    /** Só mexe no texto se mudou: cada troca obriga a janela a se redesenhar por cima do Maps. */
+    private fun TextView.setIfChanged(s: String) {
+        if (text?.toString() != s) text = s
     }
 
     fun hide() {

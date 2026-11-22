@@ -146,6 +146,7 @@ private enum class Tab(val label: String, val icon: ImageVector) {
     DISCOVERY("Descoberta", RlIcons.radar),
     LID("Explorar 21", RlIcons.binary),
     LOG("Registro", RlIcons.log),
+    VERSION("Versão", RlIcons.refresh),
     CONNECT("Conexão", RlIcons.bluetooth),
 }
 
@@ -180,6 +181,7 @@ private fun App(vm: ObdViewModel, shareText: (String) -> Unit, shareZip: () -> U
                 Tab.DTC -> DtcScreen(vm)
                 Tab.LID -> LidScreen(vm)
                 Tab.LOG -> LogScreen(vm)
+                Tab.VERSION -> VersionScreen(vm)
             }
         }
     }
@@ -242,6 +244,7 @@ private fun NavRail(vm: ObdViewModel, current: Tab, onSelect: (Tab) -> Unit) {
     val conn by vm.conn.collectAsState()
     val volts by vm.voltage.collectAsState()
     val stored = dtcs.orEmpty().filter { it.mode == "03" }.sumOf { it.codes?.size ?: 0 }
+    val update by vm.update.collectAsState()
     Column(
         Modifier.width(104.dp).fillMaxHeight().background(Rl.sunken).padding(vertical = 12.dp, horizontal = 6.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
@@ -254,7 +257,12 @@ private fun NavRail(vm: ObdViewModel, current: Tab, onSelect: (Tab) -> Unit) {
             horizontalAlignment = Alignment.CenterHorizontally,
         ) {
             Tab.entries.filter { it != Tab.CONNECT }.forEach { t ->
-                RailItem(t.label, t.icon, current == t, badge = if (t == Tab.DTC && stored > 0) stored.toString() else null) { onSelect(t) }
+                val badge = when {
+                    t == Tab.DTC && stored > 0 -> stored.toString()
+                    t == Tab.VERSION && update is UpdateState.Available -> "1"
+                    else -> null
+                }
+                RailItem(t.label, t.icon, current == t, badge = badge) { onSelect(t) }
             }
         }
         Spacer(Modifier.height(8.dp))
@@ -346,13 +354,23 @@ private fun LiveScreen(vm: ObdViewModel, goConnect: () -> Unit) {
     val available by vm.liveAvailable.collectAsState()
     val selection by vm.liveSelection.collectAsState()
     var picking by remember { mutableStateOf(false) }
+    var panelDialog by remember { mutableStateOf(false) }
     val running = busy == "Ao vivo"
     val connected = conn is ConnState.Connected
     if (picking) LivePicker(available, selection, vm::setLiveSelected) { picking = false }
+    if (panelDialog) {
+        AlertDialog(
+            onDismissRequest = { panelDialog = false },
+            containerColor = Rl.raised,
+            confirmButton = { GhostButton("Fechar", { panelDialog = false }) },
+            text = { Column(Modifier.verticalScroll(rememberScrollState())) { PanelCard(vm) } },
+        )
+    }
     Column(Modifier.fillMaxSize(), verticalArrangement = Arrangement.spacedBy(14.dp)) {
         ScreenHeader("Ao vivo · motor 7E0", garage.vehicle.name) {
             if (connected) Badge(if (running) "Gravando sessão" else "Conectado")
             SecondaryButton("Escolher dados", { picking = true }, icon = RlIcons.check)
+            SecondaryButton("Painel", { panelDialog = true })
             if (running) {
                 SecondaryButton("Parar", vm::stop, icon = RlIcons.stop)
             } else {

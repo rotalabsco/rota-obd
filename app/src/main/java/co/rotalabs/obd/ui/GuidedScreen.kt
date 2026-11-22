@@ -181,7 +181,7 @@ private fun RunningPanel(vm: ObdViewModel, step: GuidedCollection.Step, run: Gui
                 Text("${run.samples} leituras", style = MaterialTheme.typography.bodySmall, color = Rl.text3)
             }
         }
-        Action.Discovery -> {
+        is Action.Discovery -> {
             val progress by vm.progress.collectAsState()
             val current by vm.step.collectAsState()
             Text("Lendo tudo o que o carro informa. Não mexa em nada até terminar.", style = MaterialTheme.typography.bodyLarge, color = Rl.text2)

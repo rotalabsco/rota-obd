@@ -32,6 +32,7 @@ import co.rotalabs.obd.core.ElmExchanger
 import co.rotalabs.obd.core.ExportLayout
 import co.rotalabs.obd.core.GuidedCollection
 import co.rotalabs.obd.core.FuelEntry
+import co.rotalabs.obd.core.FuelEstimate
 import co.rotalabs.obd.core.Garage
 import co.rotalabs.obd.core.GarageData
 import co.rotalabs.obd.core.GarageStore
@@ -55,6 +56,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.sample
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import java.io.File
@@ -186,6 +188,9 @@ class ObdViewModel(app: Application) : AndroidViewModel(app) {
     // ---------- Painel flutuante ----------
 
     private val _pidReadings = MutableStateFlow<Map<Int, PanelItems.Reading>>(emptyMap())
+    private val trip = FuelEstimate.Trip()
+    private val _tripAverage = MutableStateFlow<Double?>(null)
+    val tripAverage: StateFlow<Double?> = _tripAverage
     private val _appVisible = MutableStateFlow(true)
     private val _overlayAllowed = MutableStateFlow(Settings.canDrawOverlays(app))
     val overlayAllowed: StateFlow<Boolean> = _overlayAllowed
@@ -235,17 +240,33 @@ class ObdViewModel(app: Application) : AndroidViewModel(app) {
         if (kind != "pid" || fields["mod"] != Modules.ENGINE.id) return
         val pid = (fields["req"] as? String)?.takeIf { it.length == 4 }?.substring(2)?.toIntOrNull(16) ?: return
         val value = fields["value"] as? Double ?: return
-        _pidReadings.value = _pidReadings.value + (pid to PanelItems.Reading(value, System.currentTimeMillis()))
+        val now = System.currentTimeMillis()
+        val readings = _pidReadings.value + (pid to PanelItems.Reading(value, now))
+        _pidReadings.value = readings
+        // A cada rotação lida, soma o consumo estimado da viagem com a carga e a velocidade mais recentes.
+        if (pid == 0x0C) {
+            val load = readings[0x04]?.takeIf { now - it.atMillis <= 10_000 }?.value
+            val speed = readings[0x0D]?.takeIf { now - it.atMillis <= 10_000 }?.value
+            if (load != null && speed != null) {
+                trip.add(load, value, speed, now)
+                _tripAverage.value = trip.average()
+            }
+        }
     }
 
+
     /** Mostra o painel quando o app sai da tela (Maps por cima) e há conexão; some quando o app volta. */
+    @OptIn(kotlinx.coroutines.FlowPreview::class)
     private fun driveFloatingPanel() {
         data class Live(val conn: ConnState, val busy: String?, val readings: Map<Int, PanelItems.Reading>, val volts: Double?, val visible: Boolean)
         viewModelScope.launch {
             combine(
                 combine(_conn, _busy, _pidReadings, _voltage, _appVisible) { c, b, r, v, vis -> Live(c, b, r, v, vis) },
                 _panelEnabled, _panelItems, _overlayAllowed,
-            ) { live, enabled, items, allowed -> Triple(live, enabled && allowed, items) }.collect { (live, on, items) ->
+            ) { live, enabled, items, allowed -> Triple(live, enabled && allowed, items) }
+                // Atualizar o painel a cada leitura redesenhava a janela dezenas de vezes por segundo.
+                .sample(1000)
+                .collect { (live, on, items) ->
                 val connected = live.conn is ConnState.Connected || live.conn is ConnState.Connecting
                 if (!on || live.visible || !connected) {
                     panel.hide()
@@ -261,7 +282,7 @@ class ObdViewModel(app: Application) : AndroidViewModel(app) {
                     else -> "● Conectado · sem leitura"
                 }
                 val readings = if (live.busy == null) emptyMap() else live.readings
-                panel.update(status, recording, PanelItems.lines(items, readings, live.volts, System.currentTimeMillis()))
+                panel.update(status, recording, PanelItems.lines(items, readings, live.volts, System.currentTimeMillis(), _tripAverage.value))
             }
         }
     }
@@ -303,9 +324,38 @@ class ObdViewModel(app: Application) : AndroidViewModel(app) {
     private fun versionLabel(): String = "versão ${updater.installedName} (build ${updater.installedBuild})"
     private var downloaded: File? = null
 
+    /** Última versão vista no GitHub (para a aba Versão mostrar o que mudou) e quando se procurou. */
+    private val _latestRelease = MutableStateFlow<UpdateCheck.Release?>(null)
+    val latestRelease: StateFlow<UpdateCheck.Release?> = _latestRelease
+    private val _lastCheckAt = MutableStateFlow<Long?>(null)
+    val lastCheckAt: StateFlow<Long?> = _lastCheckAt
+    private var lastCheckFailed = false
+    val installedBuild: Long get() = updater.installedBuild
+    val installedAt: Long get() = updater.installedAt
+
     init {
         // Depois das declarações acima: o Kotlin inicializa na ordem do arquivo.
         checkUpdate(manual = false)
+        // O app pode ficar horas vivo (gravação em segundo plano): procura de novo de hora em hora.
+        viewModelScope.launch {
+            while (true) {
+                delay(60 * 60_000L)
+                checkUpdate(manual = false)
+            }
+        }
+    }
+
+    /**
+     * Ao voltar para a tela: procura se a última busca tem mais de 15 min, ou mais de 2 min se falhou
+     * (a central costuma ligar sem internet e ganhar internet depois).
+     */
+    private fun checkUpdateIfStale() {
+        // Não mexe numa atualização em andamento (download, permissão, instalação) nem numa já encontrada.
+        val s = _update.value
+        if (s !is UpdateState.Idle && s !is UpdateState.UpToDate && s !is UpdateState.Failed) return
+        val last = _lastCheckAt.value
+        val wait = if (lastCheckFailed) 2 * 60_000L else 15 * 60_000L
+        if (last == null || System.currentTimeMillis() - last >= wait) checkUpdate(manual = false)
     }
 
     /**
@@ -319,6 +369,9 @@ class ObdViewModel(app: Application) : AndroidViewModel(app) {
         viewModelScope.launch {
             _update.value = try {
                 val release = updater.fetchLatest()
+                lastCheckFailed = false
+                _lastCheckAt.value = System.currentTimeMillis()
+                _latestRelease.value = release
                 when {
                     release == null -> if (manual) UpdateState.Failed("A versão de teste não tem APK publicado", null) else UpdateState.Idle
                     UpdateCheck.isNewer(release, updater.installedBuild) -> UpdateState.Available(release).also {
@@ -327,9 +380,21 @@ class ObdViewModel(app: Application) : AndroidViewModel(app) {
                     else -> UpdateState.UpToDate(updater.installedBuild)
                 }
             } catch (t: Throwable) {
+                lastCheckFailed = true
+                _lastCheckAt.value = System.currentTimeMillis()
                 if (manual) UpdateState.Failed("Sem acesso ao GitHub: ${t.message ?: t.javaClass.simpleName}", null) else UpdateState.Idle
             }
         }
+    }
+
+    /** Instala a versão mais nova vista no GitHub, mesmo depois de "Depois" no aviso (aba Versão). */
+    fun installLatest() {
+        val latest = _latestRelease.value ?: return
+        if (!UpdateCheck.isNewer(latest, updater.installedBuild)) return
+        val s = _update.value
+        if (s is UpdateState.Downloading || s is UpdateState.Installing) return
+        _update.value = UpdateState.Available(latest)
+        installUpdate()
     }
 
     fun installUpdate() {
@@ -370,6 +435,7 @@ class ObdViewModel(app: Application) : AndroidViewModel(app) {
 
     /** Ao voltar das configurações, segue a instalação se a permissão foi dada. */
     fun onResume() {
+        checkUpdateIfStale()
         val s = _update.value
         if (s is UpdateState.NeedsPermission && updater.canInstall()) installUpdate()
         // Voltou do instalador sem instalar (cancelou): oferece de novo.
@@ -380,9 +446,38 @@ class ObdViewModel(app: Application) : AndroidViewModel(app) {
         _update.value = UpdateState.Idle
     }
 
+    // O log recebe uma linha por troca com o adaptador: guarda num buffer e publica no máximo 3x por segundo.
+    private val logBuffer = ArrayDeque<String>()
+    private var logPublishPending = false
+
+    /** HH:mm:ss.SSS da hora local, sem SimpleDateFormat (caro demais para uma linha por leitura). */
+    private fun clock(): String {
+        val now = System.currentTimeMillis()
+        val local = now + java.util.TimeZone.getDefault().getOffset(now)
+        val ms = (local % 1000).toInt()
+        val s = (local / 1000 % 60).toInt()
+        val m = (local / 60_000 % 60).toInt()
+        val h = (local / 3_600_000 % 24).toInt()
+        val sb = StringBuilder(12)
+        fun pad(v: Int, n: Int) { var d = 10; repeat(n - 1) { if (v < d) sb.append('0'); d *= 10 }; sb.append(v) }
+        pad(h, 2); sb.append(':'); pad(m, 2); sb.append(':'); pad(s, 2); sb.append('.'); pad(ms, 3)
+        return sb.toString()
+    }
+
     private fun log(line: String) {
-        val time = SimpleDateFormat("HH:mm:ss.SSS", Locale.ROOT).format(Date())
-        _log.value = (_log.value + "$time $line").takeLast(400)
+        synchronized(logBuffer) {
+            logBuffer.addLast(clock() + " " + line)
+            while (logBuffer.size > 400) logBuffer.removeFirst()
+            if (logPublishPending) return
+            logPublishPending = true
+        }
+        viewModelScope.launch {
+            delay(300)
+            synchronized(logBuffer) {
+                logPublishPending = false
+                _log.value = logBuffer.toList()
+            }
+        }
     }
 
     // ---------- Conexão ----------
@@ -614,19 +709,37 @@ class ObdViewModel(app: Application) : AndroidViewModel(app) {
         discover(e, sweep21, "relatorio_${System.currentTimeMillis()}.md")
     }
 
-    private suspend fun discover(e: Elm327, sweep21: Boolean, reportName: String) {
+    /** LIDs do serviço 21 que responderam na última Descoberta completa (guardados entre sessões). */
+    private fun knownLids(): Map<Module, List<Int>>? {
+        val raw = prefs.getString(KEY_KNOWN_LIDS, null) ?: return null
+        val byId = listOf(Modules.ENGINE, Modules.TRANSMISSION).associateBy { it.id }
+        val map = raw.split(';').mapNotNull { part ->
+            val (id, list) = part.split(':').takeIf { it.size == 2 } ?: return@mapNotNull null
+            val m = byId[id] ?: return@mapNotNull null
+            m to list.split(',').mapNotNull { it.toIntOrNull(16) }
+        }.toMap()
+        return map.takeIf { it.isNotEmpty() }
+    }
+
+    private suspend fun discover(e: Elm327, sweep21: Boolean, reportName: String, fast: Boolean = false) {
         _report.value = null
         _progress.value = 0f
         val reports = Discovery(e, recorder!!) { step, fraction ->
             _progress.value = fraction
             _step.value = step
             log(step)
-        }.run(sweepService21 = sweep21)
+        }.run(sweepService21 = sweep21, knownLids = if (fast) knownLids() else null)
         engineSupported = reports.firstOrNull { it.module == Modules.ENGINE }?.supportedPids
         engineSupported?.let { setLiveAvailable(it) }
         _lidsFound.value = reports.associate { r ->
             r.module to r.lids.filter { it.result is ObdResult.Ok }.map { it.lid }
         }.filterValues { it.isNotEmpty() }
+        if (sweep21 && !fast) {
+            val found = _lidsFound.value
+            if (found.isNotEmpty()) {
+                prefs.edit().putString(KEY_KNOWN_LIDS, found.entries.joinToString(";") { (m, l) -> m.id + ":" + l.joinToString(",") { "%02X".format(it) } }).apply()
+            }
+        }
         val text = Discovery.textReport(adapterInfo, reports, versionLabel())
         File(sessionsDir, reportName).writeText(text)
         _report.value = text
@@ -667,12 +780,18 @@ class ObdViewModel(app: Application) : AndroidViewModel(app) {
             _live.value = selected.map { id ->
                 val d = LiveSelection.derived[id]
                 if (d != null) {
-                    val value = if (id == LiveSelection.BOOST) LiveSelection.boostBar(raw[0x0B]?.second, raw[0x33]?.second) else null
+                    val (value, unit) = when (id) {
+                        LiveSelection.BOOST -> LiveSelection.boostBar(raw[0x0B]?.second, raw[0x33]?.second) to d.unit
+                        LiveSelection.CONSUMPTION ->
+                            FuelEstimate.instant(raw[0x04]?.second, raw[0x0C]?.second, raw[0x0D]?.second) ?: (null to d.unit)
+                        LiveSelection.TRIP_AVG -> _tripAverage.value to d.unit
+                        else -> null to d.unit
+                    }
                     val missing = d.needs.firstOrNull { raw[it]?.second == null }
-                    LiveValue(id, d.name, d.unit, value, if (value == null && missing != null) status(raw[missing]?.first, null) else null)
+                    LiveValue(id, d.name, unit, value, if (value == null && missing != null) status(raw[missing]?.first, null) else null)
                 } else {
                     val (r, v) = raw[id] ?: (null to null)
-                    LiveValue(id, LiveSelection.name(id), LiveSelection.unit(id), v, status(r, v))
+                    LiveValue(id, LiveSelection.name(id), LiveSelection.unit(id), LiveSelection.shown(id, v), status(r, v))
                 }
             }
         }
@@ -791,7 +910,9 @@ class ObdViewModel(app: Application) : AndroidViewModel(app) {
             var status = "interrompido"
             try {
                 when (action) {
-                    GuidedCollection.Action.Discovery -> discover(e, true, ExportLayout.guidedReportName(started, step.id))
+                    // Depois da primeira Descoberta completa, as da coleta leem só os LIDs que já responderam.
+                    is GuidedCollection.Action.Discovery ->
+                        discover(e, true, ExportLayout.guidedReportName(started, step.id), fast = !action.full && knownLids() != null)
                     is GuidedCollection.Action.Watch -> watchReads(e, action)
                     GuidedCollection.Action.Manual -> Unit
                 }
@@ -817,6 +938,11 @@ class ObdViewModel(app: Application) : AndroidViewModel(app) {
     private suspend fun watchReads(e: Elm327, a: GuidedCollection.Action.Watch) {
         val start = System.currentTimeMillis()
         var samples = 0
+        // Rodízio: todos os LIDs que responderam na última Descoberta completa, fora os fixos do passo.
+        val fixed = a.reads.toSet()
+        val rotation = if (a.rotateKnown <= 0) emptyList() else
+            knownLids().orEmpty().flatMap { (m, lids) -> lids.map { GuidedCollection.Read(m, 0x21, it) } }.filter { it !in fixed }
+        var rotIdx = 0
         while (kotlin.coroutines.coroutineContext.isActive) {
             if (a.durationSec != null && System.currentTimeMillis() - start >= a.durationSec * 1000L) break
             // Na viagem, o que está marcado no painel flutuante também é lido, para ele não mostrar "—".
@@ -826,7 +952,9 @@ class ObdViewModel(app: Application) : AndroidViewModel(app) {
                 panelPids().filter { it !in have && (supported == null || it in supported) }
                     .map { GuidedCollection.Read(Modules.ENGINE, 0x01, it) }
             }
-            for (r in a.reads + extra) {
+            val rotated = if (rotation.isEmpty()) emptyList() else
+                List(minOf(a.rotateKnown, rotation.size)) { rotation[(rotIdx + it) % rotation.size] }.also { rotIdx = (rotIdx + it.size) % rotation.size }
+            for (r in a.reads + extra + rotated) {
                 if (r.service == 0x01) e.readPid(r.module, r.id) else e.request(r.module, r.hex, 1000, kind = "lid_watch")
                 samples++
             }
@@ -937,6 +1065,7 @@ class ObdViewModel(app: Application) : AndroidViewModel(app) {
         private const val LABEL_LID = "Explorar 21"
         const val LABEL_GUIDED = "Coleta guiada"
         private const val KEY_PANEL = "painel_flutuante"
+        private const val KEY_KNOWN_LIDS = "lids_conhecidos"
         private const val KEY_PANEL_ITEMS = "painel_flutuante_itens"
         private const val KEY_PANEL_X = "painel_flutuante_x"
         private const val KEY_PANEL_Y = "painel_flutuante_y"

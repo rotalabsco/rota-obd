@@ -30,6 +30,10 @@ class Updater(private val context: Context) {
             return if (Build.VERSION.SDK_INT >= 28) info.longVersionCode else @Suppress("DEPRECATION") info.versionCode.toLong()
         }
 
+    /** Quando esta versão foi instalada ou atualizada. */
+    val installedAt: Long
+        get() = context.packageManager.getPackageInfo(context.packageName, 0).lastUpdateTime
+
     val installedName: String
         get() = context.packageManager.getPackageInfo(context.packageName, 0).versionName ?: "?"
 

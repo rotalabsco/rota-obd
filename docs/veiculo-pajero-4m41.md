@@ -46,6 +46,24 @@ Explorar 21 foi usado só no `2101` do motor, por ~60 s parado: 61 respostas dif
 ligar o ar. As 22 leituras sem resposta ficaram todas no fim (ignição desligada). Ainda não dá para
 atribuir significado a nenhum byte.
 
+## Viagem de 21/11/2026 (~151 km, Ao vivo, versão 0.1.14)
+
+Só PIDs padrão: a gravação da viagem com o serviço 21 ainda não existia nesta versão.
+
+| O que | Resultado |
+|---|---|
+| Manual, reduzindo até a 1ª (~15:50) | pedal e carga em 0, rotação de 892 para 2.122 rpm com a velocidade caindo de 74 para 26 km/h: freio motor com injeção cortada |
+| Serra no manual (16:31–16:33) | carga 0 por ~1,5 min a 2.500–3.200 rpm (relação rpm/km/h ≈ 50: 2ª); temperatura do motor caiu de 89 para 85 °C |
+| D com o pé solto | a rotação volta à marcha lenta (~700 rpm) mesmo a 70 km/h: o conversor desacopla, sem freio motor |
+| Temperatura do motor | máx. 92 °C |
+| Turbo (MAP − barométrica) | máx. 1,33 bar |
+| Rail | máx. 1.380 bar |
+| P2426 | voltou depois de ~150 km (não estava às 14:17, estava às 21:35). Recorrente com o diesel daqui; o dono usa aditivo |
+| Consumo | Car Scanner marcou ~9,5 km/L na viagem. O modelo carga × rotação deu 14,5 km/L com 80 mm³ de referência; calibrado para 122 mm³ (veja `core/FuelEstimate.kt`) |
+
+O Car Scanner mostrava o volume injetado em litros: vem de um identificador do serviço 21 (perfil Mitsubishi). Achar esse
+byte é o próximo passo, com a gravação da viagem, que agora lê em rodízio todos os LIDs que responderam.
+
 ## Plano de teste no carro
 
 1. Fechar o Car Scanner. Ignição ligada, abrir o app, conectar ao Vgate.

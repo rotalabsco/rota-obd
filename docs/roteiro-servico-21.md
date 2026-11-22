@@ -3,6 +3,11 @@
 Objetivo: descobrir o significado dos bytes do serviço 21 que destravam o consumo real, a temperatura do
 câmbio e o alerta de superaquecimento. Na mesma ida, medir a densidade da tela da central.
 
+**Atualização (22/11/2026):** a aba Coleta ficou enxuta. Ficar parado segurando rotação ou ligando o ar não funcionou
+na prática, então os passos agora são: ignição ligada (Descoberta completa), motor ligado parado (rápida), câmbio
+P-R-N-D (opcional), gravar a viagem (lê em rodízio todos os LIDs que responderam, junto com os PIDs) e motor quente na
+chegada (Descoberta completa). As seções abaixo explicam o raciocínio original.
+
 **No app, use a aba Coleta.** Ela traz este roteiro passo a passo: diz o que fazer em português, mostra
 cada troca com contagem regressiva, roda a leitura sozinha e marca no arquivo o começo e o fim de cada
 passo, sem precisar anotar horário. Este documento explica o porquê de cada passo.

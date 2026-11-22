@@ -24,7 +24,15 @@ class Discovery(
         val lids: List<Lid>,
     )
 
-    suspend fun run(sweepService21: Boolean = true, modules: List<Module> = Modules.standard): List<ModuleReport> {
+    /**
+     * [knownLids]: identificadores do serviço 21 que já responderam numa Descoberta completa. Quando
+     * vem preenchido para o módulo, lê só esses (cerca de 115 em vez de 512 pedidos, ~17 s em vez de ~77 s).
+     */
+    suspend fun run(
+        sweepService21: Boolean = true,
+        modules: List<Module> = Modules.standard,
+        knownLids: Map<Module, List<Int>>? = null,
+    ): List<ModuleReport> {
         progress("Procurando módulos", 0f)
         val present = mutableListOf<Module>()
         for (m in modules) {
@@ -57,7 +65,14 @@ class Discovery(
             val dtcs = elm.readDtcs(m)
 
             val lids = mutableListOf<Lid>()
-            if (sweepService21) {
+            val only = knownLids?.get(m)
+            if (sweepService21 && only != null) {
+                only.forEachIndexed { i, lid ->
+                    currentCoroutineContext().ensureActive()
+                    if (i % 8 == 0) progress("${m.name}: serviço 21, LID %02X".format(lid), base + span * (0.3f + 0.7f * i / only.size.coerceAtLeast(1)))
+                    lids.add(Lid(m, lid, elm.request(m, "21%02X".format(lid), 1000, kind = "lid_sweep")))
+                }
+            } else if (sweepService21) {
                 var serviceUnsupported = 0
                 for (lid in 0x00..0xFF) {
                     currentCoroutineContext().ensureActive()

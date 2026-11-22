@@ -10,7 +10,11 @@ object UpdateCheck {
     const val RELEASE_API = "https://api.github.com/repos/rotalabsco/rota-obd/releases/tags/latest"
     const val ASSET_NAME = "rota-obd-debug.apk"
 
-    data class Release(val build: Int, val apkUrl: String, val sizeBytes: Long?, val publishedAt: String?)
+    data class Release(val build: Int, val apkUrl: String, val sizeBytes: Long?, val publishedAt: String?, val notes: String? = null)
+
+    /** Linhas "- ..." das notas da release (o que mudou), sem o resto do texto. */
+    fun changes(notes: String?): List<String> =
+        notes.orEmpty().lines().map { it.trim() }.filter { it.startsWith("- ") }.map { it.removePrefix("- ").trim() }.filter { it.isNotEmpty() }
 
     private val buildNumber = Regex("#(\\d+)")
 
@@ -25,7 +29,7 @@ object UpdateCheck {
         val url = asset["browser_download_url"] as? String ?: return null
         if (!url.startsWith("https://")) return null
         val size = (asset["size"] as? Double)?.toLong()
-        return Release(build, url, size, root["published_at"] as? String)
+        return Release(build, url, size, root["published_at"] as? String, root["body"] as? String)
     }
 
     fun isNewer(release: Release, installedBuild: Long): Boolean = release.build > installedBuild
